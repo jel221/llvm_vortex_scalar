@@ -6,8 +6,7 @@
 
 # Bits 1:0 of 0b10: every register field names a u register.
 # Bits 1:0 of 0b01: the second source (or the only source of an immediate
-# form, or a store value) is a u register; global indexed accesses on the
-# AMO opcode address us1 + zext(xs2).
+# form, or a store value) is a u register.
 
 # CHECK-ASM-AND-OBJ: add u1, u2, u3
 # CHECK-ASM: encoding: [0xb2,0x00,0x31,0x00]
@@ -291,27 +290,3 @@ u.mvx u1, a0
 # CHECK-ASM-AND-OBJ: x.mvu a0, u1
 # CHECK-ASM: encoding: [0x52,0x85,0x00,0xe2]
 x.mvu a0, u1
-# CHECK-ASM-AND-OBJ: vx_glb a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0x85,0xc0,0xf0]
-vx_glb a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_glh a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0x95,0xc0,0xf0]
-vx_glh a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_glw a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0xa5,0xc0,0xf0]
-vx_glw a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_glbu a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0xc5,0xc0,0xf0]
-vx_glbu a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_glhu a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0xd5,0xc0,0xf0]
-vx_glhu a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_gsb a3, u1, a2
-# CHECK-ASM: encoding: [0xad,0x86,0xc0,0xf8]
-vx_gsb a3, u1, a2
-# CHECK-ASM-AND-OBJ: vx_gsh a3, u1, a2
-# CHECK-ASM: encoding: [0xad,0x96,0xc0,0xf8]
-vx_gsh a3, u1, a2
-# CHECK-ASM-AND-OBJ: vx_gsw a3, u1, a2
-# CHECK-ASM: encoding: [0xad,0xa6,0xc0,0xf8]
-vx_gsw a3, u1, a2

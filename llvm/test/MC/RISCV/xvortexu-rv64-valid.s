@@ -66,12 +66,3 @@ sd u1, 8(u2)
 # CHECK-ASM-AND-OBJ: sd u3, 4(a0)
 # CHECK-ASM: encoding: [0x21,0x32,0x35,0x00]
 sd u3, 4(a0)
-# CHECK-ASM-AND-OBJ: vx_gld a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0xb5,0xc0,0xf0]
-vx_gld a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_glwu a0, u1, a2
-# CHECK-ASM: encoding: [0x2d,0xe5,0xc0,0xf0]
-vx_glwu a0, u1, a2
-# CHECK-ASM-AND-OBJ: vx_gsd a3, u1, a2
-# CHECK-ASM: encoding: [0xad,0xb6,0xc0,0xf8]
-vx_gsd a3, u1, a2

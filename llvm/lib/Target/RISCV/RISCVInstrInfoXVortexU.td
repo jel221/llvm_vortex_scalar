@@ -11,7 +11,7 @@
 //   0b10 uniform: every register field names a u register.
 //   0b01 uniform operand: a per-thread instruction whose second source is a
 //        u register (xd = xs1 op us2, xd = us1 op imm, xs1 cmp us2, a uniform
-//        store value), and global indexed accesses at us1 + xs2.
+//        store value).
 // Uniform registers are XLEN bits wide and the instructions keep the base ISA's
 // semantics (the W forms, ld/sd and lwu on RV64 only). The mnemonics are the
 // standard ones; the operands' register classes pick the encoding.
@@ -307,37 +307,5 @@ def VXUO_SH : VXUO_store<0b001, "sh">;
 def VXUO_SW : VXUO_store<0b010, "sw">;
 let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_SD : VXUO_store<0b011, "sd">;
-
-// Global indexed accesses on the AMO opcode, at us1 + xs2: funct5 11110
-// loads into xd, funct5 11111 stores the register in the rd field; funct3 is
-// the width as in LOAD/STORE.
-let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in
-class VXUO_gload<bits<3> funct3, string opcodestr>
-    : RVInstRAtomic<0b11110, 0, 0, funct3, OPC_AMO, (outs GPR:$rd),
-                    (ins UGPR:$rs1, GPR:$rs2), opcodestr, "$rd, $rs1, $rs2"> {
-  let Inst{1-0} = 0b01;
-}
-
-let hasSideEffects = 0, mayLoad = 0, mayStore = 1 in
-class VXUO_gstore<bits<3> funct3, string opcodestr>
-    : RVInstRAtomic<0b11111, 0, 0, funct3, OPC_AMO, (outs),
-                    (ins GPR:$rd, UGPR:$rs1, GPR:$rs2), opcodestr, "$rd, $rs1, $rs2"> {
-  let Inst{1-0} = 0b01;
-}
-
-def VXUO_GLB  : VXUO_gload<0b000, "vx_glb">;
-def VXUO_GLH  : VXUO_gload<0b001, "vx_glh">;
-def VXUO_GLW  : VXUO_gload<0b010, "vx_glw">;
-let Predicates = [HasVendorXVortexU, IsRV64] in
-def VXUO_GLD  : VXUO_gload<0b011, "vx_gld">;
-def VXUO_GLBU : VXUO_gload<0b100, "vx_glbu">;
-def VXUO_GLHU : VXUO_gload<0b101, "vx_glhu">;
-let Predicates = [HasVendorXVortexU, IsRV64] in
-def VXUO_GLWU : VXUO_gload<0b110, "vx_glwu">;
-def VXUO_GSB  : VXUO_gstore<0b000, "vx_gsb">;
-def VXUO_GSH  : VXUO_gstore<0b001, "vx_gsh">;
-def VXUO_GSW  : VXUO_gstore<0b010, "vx_gsw">;
-let Predicates = [HasVendorXVortexU, IsRV64] in
-def VXUO_GSD  : VXUO_gstore<0b011, "vx_gsd">;
 
 } // Predicates = [HasVendorXVortexU], DecoderNamespace = "XVortexU"
