@@ -52,6 +52,9 @@ private:
   DecodeStatus getInstruction32(MCInst &Instr, uint64_t &Size,
                                 ArrayRef<uint8_t> Bytes, uint64_t Address,
                                 raw_ostream &CStream) const;
+  DecodeStatus getInstructionXVortexU(MCInst &Instr, uint64_t &Size,
+                                      ArrayRef<uint8_t> Bytes, uint64_t Address,
+                                      raw_ostream &CStream) const;
   DecodeStatus getInstruction16(MCInst &Instr, uint64_t &Size,
                                 ArrayRef<uint8_t> Bytes, uint64_t Address,
                                 raw_ostream &CStream) const;
@@ -81,6 +84,17 @@ static DecodeStatus DecodeGPRRegisterClass(MCInst &Inst, uint32_t RegNo,
     return MCDisassembler::Fail;
 
   MCRegister Reg = RISCV::X0 + RegNo;
+  Inst.addOperand(MCOperand::createReg(Reg));
+  return MCDisassembler::Success;
+}
+
+static DecodeStatus DecodeUGPRRegisterClass(MCInst &Inst, uint32_t RegNo,
+                                            uint64_t Address,
+                                            const MCDisassembler *Decoder) {
+  if (RegNo >= 32)
+    return MCDisassembler::Fail;
+
+  MCRegister Reg = RISCV::U0 + RegNo;
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
 }
@@ -810,6 +824,23 @@ DecodeStatus RISCVDisassembler::getInstruction16(MCInst &MI, uint64_t &Size,
   return MCDisassembler::Fail;
 }
 
+DecodeStatus RISCVDisassembler::getInstructionXVortexU(MCInst &MI,
+                                                       uint64_t &Size,
+                                                       ArrayRef<uint8_t> Bytes,
+                                                       uint64_t Address,
+                                                       raw_ostream &CS) const {
+  if (Bytes.size() < 4) {
+    Size = 0;
+    return MCDisassembler::Fail;
+  }
+  Size = 4;
+
+  uint32_t Insn = support::endian::read32le(Bytes.data());
+  TRY_TO_DECODE_FEATURE(RISCV::FeatureVendorXVortexU, DecoderTableXVortexU32,
+                        "XVortexU table (uniform registers)");
+  return MCDisassembler::Fail;
+}
+
 DecodeStatus RISCVDisassembler::getInstruction48(MCInst &MI, uint64_t &Size,
                                                  ArrayRef<uint8_t> Bytes,
                                                  uint64_t Address,
@@ -835,6 +866,12 @@ DecodeStatus RISCVDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
                                                ArrayRef<uint8_t> Bytes,
                                                uint64_t Address,
                                                raw_ostream &CS) const {
+  // With XVortexU, bits 1:0 of 0b10 and 0b01 mark a 32-bit instruction on the
+  // uniform register file.
+  if ((Bytes[0] & 0b11) != 0b11 && (Bytes[0] & 0b11) != 0b00 &&
+      STI.hasFeature(RISCV::FeatureVendorXVortexU))
+    return getInstructionXVortexU(MI, Size, Bytes, Address, CS);
+
   // It's a 16 bit instruction if bit 0 and 1 are not 0b11.
   if ((Bytes[0] & 0b11) != 0b11)
     return getInstruction16(MI, Size, Bytes, Address, CS);

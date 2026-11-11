@@ -1208,6 +1208,18 @@ def HasVendorXVortexLdstWide
       AssemblerPredicate<(all_of FeatureVendorXVortexLdstWide),
                          "'XVortexLdstWide' (Vortex Wide Loads and Stores)">;
 
+// Vortex uniform registers: a per-warp file u0-u31 of 64-bit registers. Without
+// C every instruction is 32 bits, so instruction bits [1:0] select the register
+// file: 0b11 standard, 0b10 every operand uniform, 0b01 a uniform second
+// operand. Standard tools read those encodings as 16-bit instructions.
+def FeatureVendorXVortexU
+    : RISCVExtension<1, 0, "Vortex Uniform Registers",
+                     [FeatureVendorXVortex]>;
+def HasVendorXVortexU
+    : Predicate<"Subtarget->hasVendorXVortexU()">,
+      AssemblerPredicate<(all_of FeatureVendorXVortexU),
+                         "'XVortexU' (Vortex Uniform Registers)">;
+
 // Core-V Extensions
 
 def FeatureVendorXCVelw

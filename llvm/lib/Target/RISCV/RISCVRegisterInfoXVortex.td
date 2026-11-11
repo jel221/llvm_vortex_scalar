@@ -293,3 +293,14 @@ def FPRG8 : RISCVRegisterClass<[v8f32], 32, (add
     F24_F25_F26_F27_F28_F29_F30_F31_FOct,
     F0_F1_F2_F3_F4_F5_F6_F7_FOct
 )>;
+
+//===----------------------------------------------------------------------===//
+// Uniform registers (XVortexU): one 64-bit file per warp; u0 reads zero.
+//===----------------------------------------------------------------------===//
+
+let Namespace = "RISCV" in {
+foreach Index = 0-31 in
+  def U#Index : RISCVReg<Index, "u"#Index>;
+}
+
+def UGPR : RISCVRegisterClass<[i64], 64, (add (sequence "U%u", 0, 31))>;

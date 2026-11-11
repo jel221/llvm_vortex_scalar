@@ -772,6 +772,10 @@ Error RISCVISAInfo::checkDependency() {
                     (HasC ? "c" : "zcd") +
                     "' extension when 'd' extension is enabled");
 
+  // XVortexU takes the encodings with bits 1:0 not 0b11 for itself.
+  if (Exts.count("xvortexu") != 0 && (HasC || Exts.count("zca") != 0))
+    return getIncompatibleError("xvortexu", HasC ? "c" : "zca");
+
   if (XLen != 32 && Exts.count("zcf"))
     return getError("'zcf' is only supported for 'rv32'");
 
