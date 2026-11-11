@@ -8,13 +8,13 @@
 //
 // Vortex uniform registers (XVortexU). Instruction bits [1:0] select the
 // register file of an otherwise standard encoding:
-//   0b10 uniform: every register field names a u register; integer operations
-//        have RV64 semantics at either XLEN (add is 64-bit, addw 32-bit).
+//   0b10 uniform: every register field names a u register.
 //   0b01 uniform operand: a per-thread instruction whose second source is a
 //        u register (xd = xs1 op us2, xd = us1 op imm, xs1 cmp us2, a uniform
-//        store value), and global indexed accesses at us1 + zext(xs2).
-// The mnemonics are the standard ones; the operands' register classes pick the
-// encoding.
+//        store value), and global indexed accesses at us1 + xs2.
+// Uniform registers are XLEN bits wide and the instructions keep the base ISA's
+// semantics (the W forms, ld/sd and lwu on RV64 only). The mnemonics are the
+// standard ones; the operands' register classes pick the encoding.
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,7 +37,7 @@ class VXU_ri<bits<3> funct3, RISCVOpcode opcode, string opcodestr>
 }
 class VXU_shift<bits<5> imm11_7, bits<3> funct3, string opcodestr>
     : RVInstIShift<imm11_7, funct3, OPC_OP_IMM, (outs UGPR:$rd),
-                   (ins UGPR:$rs1, uimm6:$shamt), opcodestr, "$rd, $rs1, $shamt"> {
+                   (ins UGPR:$rs1, uimmlog2xlen:$shamt), opcodestr, "$rd, $rs1, $shamt"> {
   let Inst{1-0} = 0b10;
 }
 class VXU_shiftw<bits<7> imm11_5, bits<3> funct3, string opcodestr>
@@ -68,15 +68,25 @@ def VXU_REMU   : VXU_rr<0b0000001, 0b111, OPC_OP, "remu">;
 def VXU_CZERO_EQZ : VXU_rr<0b0000111, 0b101, OPC_OP, "czero.eqz">;
 def VXU_CZERO_NEZ : VXU_rr<0b0000111, 0b111, OPC_OP, "czero.nez">;
 
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_ADDW   : VXU_rr<0b0000000, 0b000, OPC_OP_32, "addw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SUBW   : VXU_rr<0b0100000, 0b000, OPC_OP_32, "subw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SLLW   : VXU_rr<0b0000000, 0b001, OPC_OP_32, "sllw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SRLW   : VXU_rr<0b0000000, 0b101, OPC_OP_32, "srlw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SRAW   : VXU_rr<0b0100000, 0b101, OPC_OP_32, "sraw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_MULW   : VXU_rr<0b0000001, 0b000, OPC_OP_32, "mulw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_DIVW   : VXU_rr<0b0000001, 0b100, OPC_OP_32, "divw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_DIVUW  : VXU_rr<0b0000001, 0b101, OPC_OP_32, "divuw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_REMW   : VXU_rr<0b0000001, 0b110, OPC_OP_32, "remw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_REMUW  : VXU_rr<0b0000001, 0b111, OPC_OP_32, "remuw">;
 
 def VXU_ADDI   : VXU_ri<0b000, OPC_OP_IMM, "addi">;
@@ -85,12 +95,16 @@ def VXU_SLTIU  : VXU_ri<0b011, OPC_OP_IMM, "sltiu">;
 def VXU_XORI   : VXU_ri<0b100, OPC_OP_IMM, "xori">;
 def VXU_ORI    : VXU_ri<0b110, OPC_OP_IMM, "ori">;
 def VXU_ANDI   : VXU_ri<0b111, OPC_OP_IMM, "andi">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_ADDIW  : VXU_ri<0b000, OPC_OP_IMM_32, "addiw">;
 def VXU_SLLI   : VXU_shift<0b00000, 0b001, "slli">;
 def VXU_SRLI   : VXU_shift<0b00000, 0b101, "srli">;
 def VXU_SRAI   : VXU_shift<0b01000, 0b101, "srai">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SLLIW  : VXU_shiftw<0b0000000, 0b001, "slliw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SRLIW  : VXU_shiftw<0b0000000, 0b101, "srliw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SRAIW  : VXU_shiftw<0b0100000, 0b101, "sraiw">;
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
@@ -145,13 +159,16 @@ class VXU_store<bits<3> funct3, string opcodestr>
 def VXU_LB  : VXU_load<0b000, "lb">;
 def VXU_LH  : VXU_load<0b001, "lh">;
 def VXU_LW  : VXU_load<0b010, "lw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_LD  : VXU_load<0b011, "ld">;
 def VXU_LBU : VXU_load<0b100, "lbu">;
 def VXU_LHU : VXU_load<0b101, "lhu">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_LWU : VXU_load<0b110, "lwu">;
 def VXU_SB  : VXU_store<0b000, "sb">;
 def VXU_SH  : VXU_store<0b001, "sh">;
 def VXU_SW  : VXU_store<0b010, "sw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SD  : VXU_store<0b011, "sd">;
 
 let hasNoSchedulingInfo = 1, hasSideEffects = 1, mayLoad = 0, mayStore = 0 in {
@@ -288,9 +305,10 @@ class VXUO_store<bits<3> funct3, string opcodestr>
 def VXUO_SB : VXUO_store<0b000, "sb">;
 def VXUO_SH : VXUO_store<0b001, "sh">;
 def VXUO_SW : VXUO_store<0b010, "sw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_SD : VXUO_store<0b011, "sd">;
 
-// Global indexed accesses on the AMO opcode, at us1 + zext(xs2): funct5 11110
+// Global indexed accesses on the AMO opcode, at us1 + xs2: funct5 11110
 // loads into xd, funct5 11111 stores the register in the rd field; funct3 is
 // the width as in LOAD/STORE.
 let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in
@@ -310,13 +328,16 @@ class VXUO_gstore<bits<3> funct3, string opcodestr>
 def VXUO_GLB  : VXUO_gload<0b000, "vx_glb">;
 def VXUO_GLH  : VXUO_gload<0b001, "vx_glh">;
 def VXUO_GLW  : VXUO_gload<0b010, "vx_glw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_GLD  : VXUO_gload<0b011, "vx_gld">;
 def VXUO_GLBU : VXUO_gload<0b100, "vx_glbu">;
 def VXUO_GLHU : VXUO_gload<0b101, "vx_glhu">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_GLWU : VXUO_gload<0b110, "vx_glwu">;
 def VXUO_GSB  : VXUO_gstore<0b000, "vx_gsb">;
 def VXUO_GSH  : VXUO_gstore<0b001, "vx_gsh">;
 def VXUO_GSW  : VXUO_gstore<0b010, "vx_gsw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_GSD  : VXUO_gstore<0b011, "vx_gsd">;
 
 } // Predicates = [HasVendorXVortexU], DecoderNamespace = "XVortexU"
