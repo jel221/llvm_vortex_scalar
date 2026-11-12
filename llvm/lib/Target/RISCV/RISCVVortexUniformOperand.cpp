@@ -139,6 +139,9 @@ private:
   bool buildConstant(MachineInstr &Copy);
   void eraseIfDead(Register Reg);
   bool cse(MachineDominatorTree &MDT);
+  Register uniformSource(Register R, MachineInstr &Before,
+                         SmallVectorImpl<MachineInstr *> &Built);
+  bool toUniformForm(MachineInstr &MI);
 
   const RISCVInstrInfo *TII = nullptr;
   MachineRegisterInfo *MRI = nullptr;
@@ -403,6 +406,71 @@ bool RISCVVortexUniformOperand::cse(MachineDominatorTree &MDT) {
   return Changed;
 }
 
+// The u register holding R's value, when R is a copy of one, zero or a small
+// constant (built before Before); an invalid register otherwise.
+Register RISCVVortexUniformOperand::uniformSource(
+    Register R, MachineInstr &Before, SmallVectorImpl<MachineInstr *> &Built) {
+  while (R.isVirtual()) {
+    MachineInstr *Def = MRI->getUniqueVRegDef(R);
+    if (!Def)
+      return Register();
+    if (Def->isCopy()) {
+      R = Def->getOperand(1).getReg();
+      if (R.isVirtual() && MRI->getRegClass(R) == &RISCV::UGPRRegClass)
+        return R;
+      continue;
+    }
+    const DebugLoc &DL = Before.getDebugLoc();
+    MachineBasicBlock &MBB = *Before.getParent();
+    Register U = MRI->createVirtualRegister(&RISCV::UGPRRegClass);
+    if (Def->getOpcode() == RISCV::ADDI && Def->getOperand(1).isReg() &&
+        Def->getOperand(1).getReg() == RISCV::X0 && Def->getOperand(2).isImm()) {
+      Built.push_back(BuildMI(MBB, Before, DL, TII->get(RISCV::VXU_ADDI), U)
+                          .addReg(RISCV::U0)
+                          .add(Def->getOperand(2)));
+      return U;
+    }
+    if (Def->getOpcode() == RISCV::LUI && Def->getOperand(1).isImm()) {
+      Built.push_back(BuildMI(MBB, Before, DL, TII->get(RISCV::VXU_LUI), U)
+                          .add(Def->getOperand(1)));
+      return U;
+    }
+    return Register();
+  }
+  return R == RISCV::X0 ? Register(RISCV::U0) : Register();
+}
+
+// Warp control whose operands are all warp-uniform takes them from the u
+// registers (mode 0b10).
+bool RISCVVortexUniformOperand::toUniformForm(MachineInstr &MI) {
+  unsigned UOpc;
+  switch (MI.getOpcode()) {
+  case RISCV::VX_TMC:    UOpc = RISCV::VXU_TMC; break;
+  case RISCV::VX_WSPAWN: UOpc = RISCV::VXU_WSPAWN; break;
+  case RISCV::VX_BAR:    UOpc = RISCV::VXU_BAR; break;
+  default: return false;
+  }
+  SmallVector<MachineInstr *, 2> Built;
+  SmallVector<Register, 2> Srcs, Old;
+  for (const MachineOperand &MO : MI.explicit_uses()) {
+    Register U = MO.isReg() ? uniformSource(MO.getReg(), MI, Built) : Register();
+    if (!U) {
+      for (MachineInstr *B : Built)
+        B->eraseFromParent();
+      return false;
+    }
+    Srcs.push_back(U);
+    Old.push_back(MO.getReg());
+  }
+  auto MIB = BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), TII->get(UOpc));
+  for (Register U : Srcs)
+    MIB.addReg(U);
+  MI.eraseFromParent();
+  for (Register R : Old)
+    eraseIfDead(R);
+  return true;
+}
+
 bool RISCVVortexUniformOperand::runOnMachineFunction(MachineFunction &MF) {
   if (skipFunction(MF.getFunction()))
     return false;
@@ -423,6 +491,10 @@ bool RISCVVortexUniformOperand::runOnMachineFunction(MachineFunction &MF) {
         ToU.push_back(&MI);
   for (MachineInstr *MI : ToU)
     Changed |= buildConstant(*MI);
+
+  for (MachineBasicBlock &MBB : MF)
+    for (MachineInstr &MI : make_early_inc_range(MBB))
+      Changed |= toUniformForm(MI);
 
   // The copies first: folding rewrites the instructions around them.
   SmallVector<MachineInstr *, 16> Copies;

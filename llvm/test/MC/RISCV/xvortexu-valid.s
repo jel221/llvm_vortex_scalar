@@ -338,3 +338,14 @@ fsw fa0, 4(u1)
 # CHECK-ASM-AND-OBJ: fsd fa0, 4(u1)
 # CHECK-ASM: encoding: [0x24,0xb2,0xa0,0x00]
 fsd fa0, 4(u1)
+
+# Bits 1:0 of 0b10 on custom-0 warp control: every operand is uniform.
+# CHECK-ASM-AND-OBJ: vx_tmc u3
+# CHECK-ASM: encoding: [0x0a,0x80,0x01,0x00]
+vx_tmc u3
+# CHECK-ASM-AND-OBJ: vx_wspawn u1, u2
+# CHECK-ASM: encoding: [0x0a,0x90,0x20,0x00]
+vx_wspawn u1, u2
+# CHECK-ASM-AND-OBJ: vx_bar u5, u6
+# CHECK-ASM: encoding: [0x0a,0xc0,0x62,0x00]
+vx_bar u5, u6

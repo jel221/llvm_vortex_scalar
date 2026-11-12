@@ -195,6 +195,27 @@ def VXU_CSRRWI : VXU_csr_i<0b101, "csrrwi">;
 def VXU_CSRRSI : VXU_csr_i<0b110, "csrrsi">;
 def VXU_CSRRCI : VXU_csr_i<0b111, "csrrci">;
 
+// Warp control whose operands are all warp-invariant.
+let hasSideEffects = 1, mayLoad = 0, mayStore = 0 in {
+def VXU_TMC : RVInstR<0, 0b000, RISCV_CUSTOM0, (outs), (ins UGPR:$rs1),
+                      "vx_tmc", "$rs1"> {
+  let rd = 0;
+  let rs2 = 0;
+  let Inst{1-0} = 0b10;
+}
+def VXU_WSPAWN : RVInstR<0, 0b001, RISCV_CUSTOM0, (outs), (ins UGPR:$rs1, UGPR:$rs2),
+                         "vx_wspawn", "$rs1, $rs2"> {
+  let rd = 0;
+  let Inst{1-0} = 0b10;
+}
+let isBarrier = 1 in
+def VXU_BAR : RVInstR<0, 0b100, RISCV_CUSTOM0, (outs), (ins UGPR:$rs1, UGPR:$rs2),
+                      "vx_bar", "$rs1, $rs2"> {
+  let rd = 0;
+  let Inst{1-0} = 0b10;
+}
+}
+
 // Moves between the files, on the fmv.d.x / fmv.x.d encodings: u.mvx takes the
 // first active lane, x.mvu broadcasts.
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0, rs2 = 0b00000 in {

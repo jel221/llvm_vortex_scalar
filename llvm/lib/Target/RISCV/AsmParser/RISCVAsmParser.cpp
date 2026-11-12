@@ -461,7 +461,8 @@ public:
     return Kind == KindTy::Register &&
            (RISCVMCRegisterClasses[RISCV::GPRRegClassID].contains(Reg.RegNum) ||
             RISCVMCRegisterClasses[RISCV::FPR64RegClassID].contains(Reg.RegNum) ||
-            RISCVMCRegisterClasses[RISCV::VRRegClassID].contains(Reg.RegNum));
+            RISCVMCRegisterClasses[RISCV::VRRegClassID].contains(Reg.RegNum) ||
+            RISCVMCRegisterClasses[RISCV::UGPRRegClassID].contains(Reg.RegNum));
   }
   bool isAnyRegC() const {
     return Kind == KindTy::Register &&
