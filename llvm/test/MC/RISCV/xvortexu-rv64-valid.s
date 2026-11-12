@@ -1,7 +1,7 @@
-# RUN: llvm-mc %s -triple=riscv64 -mattr=+m,+zicond,+xvortexu -show-encoding \
+# RUN: llvm-mc %s -triple=riscv64 -mattr=+m,+f,+d,+zicond,+xvortexu -show-encoding \
 # RUN:     | FileCheck -check-prefixes=CHECK-ASM,CHECK-ASM-AND-OBJ %s
-# RUN: llvm-mc -filetype=obj -triple=riscv64 -mattr=+m,+zicond,+xvortexu < %s \
-# RUN:     | llvm-objdump --mattr=+m,+zicond,+xvortexu --no-print-imm-hex -d - \
+# RUN: llvm-mc -filetype=obj -triple=riscv64 -mattr=+m,+f,+d,+zicond,+xvortexu < %s \
+# RUN:     | llvm-objdump --mattr=+m,+f,+d,+zicond,+xvortexu --no-print-imm-hex -d - \
 # RUN:     | FileCheck --check-prefix=CHECK-ASM-AND-OBJ %s
 
 # The W forms, ld/sd/lwu and 6-bit shift amounts, on RV64 only.
@@ -66,3 +66,27 @@ sd u1, 8(u2)
 # CHECK-ASM-AND-OBJ: sd u3, 4(a0)
 # CHECK-ASM: encoding: [0x21,0x32,0x35,0x00]
 sd u3, 4(a0)
+
+# RV64 forms of the uniform-operand loads (0b01) and the uniform-first-operand
+# operations and stores (0b00).
+# CHECK-ASM-AND-OBJ: ld a0, 8(u1)
+# CHECK-ASM: encoding: [0x01,0xb5,0x80,0x00]
+ld a0, 8(u1)
+# CHECK-ASM-AND-OBJ: lwu a0, 8(u1)
+# CHECK-ASM: encoding: [0x01,0xe5,0x80,0x00]
+lwu a0, 8(u1)
+# CHECK-ASM-AND-OBJ: fld fa0, 8(u1)
+# CHECK-ASM: encoding: [0x05,0xb5,0x80,0x00]
+fld fa0, 8(u1)
+# CHECK-ASM-AND-OBJ: subw a0, u1, a2
+# CHECK-ASM: encoding: [0x38,0x85,0xc0,0x40]
+subw a0, u1, a2
+# CHECK-ASM-AND-OBJ: sllw a0, u1, a2
+# CHECK-ASM: encoding: [0x38,0x95,0xc0,0x00]
+sllw a0, u1, a2
+# CHECK-ASM-AND-OBJ: sd a0, 4(u1)
+# CHECK-ASM: encoding: [0x20,0xb2,0xa0,0x00]
+sd a0, 4(u1)
+# CHECK-ASM-AND-OBJ: fsd fa0, 4(u1)
+# CHECK-ASM: encoding: [0x24,0xb2,0xa0,0x00]
+fsd fa0, 4(u1)

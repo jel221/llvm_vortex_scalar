@@ -143,5 +143,24 @@ define void @uniform_barrier(ptr %arg) "vortex-kernel" {
   ret void
 }
 
+; A value an asm leaves in a u register (the vu constraint) is uniform: the
+; address computed from it stays in the u file.
+define void @uniform_asm_result(ptr %arg) "vortex-kernel" {
+; CHECK-LABEL: uniform_asm_result:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    #APP
+; CHECK-NEXT:    csrrs u1, 3295, u0
+; CHECK-NEXT:    #NO_APP
+; CHECK-NEXT:    lw u1, 64(u1)
+; CHECK-NEXT:    sw u1, 0(u10)
+; CHECK-NEXT:    ret
+  %base = call i32 asm "csrrs $0, 0xcdf, u0", "=^vu"()
+  %p = add i32 %base, 64
+  %q = inttoptr i32 %p to ptr
+  %v = load i32, ptr %q
+  store i32 %v, ptr %arg
+  ret void
+}
+
 declare i32 @llvm.riscv.vx.uniform.i32.i32(i32)
 declare void @llvm.riscv.vx.bar.i32(i32, i32)

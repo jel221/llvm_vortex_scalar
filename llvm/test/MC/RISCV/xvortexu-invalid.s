@@ -21,6 +21,10 @@ ld u1, 0(u2)
 # CHECK-RV32: :[[@LINE-1]]:1: error: instruction requires the following: RV64I Base Instruction Set
 slli u1, u2, 40
 # CHECK-RV32: :[[@LINE-1]]:14: error: immediate must be an integer in the range [0, 31]
+ld a0, 8(u1)
+# CHECK-RV32: :[[@LINE-1]]:1: error: instruction requires the following: RV64I Base Instruction Set
+subw a0, u1, a2
+# CHECK-RV32: :[[@LINE-1]]:1: error: instruction requires the following: RV64I Base Instruction Set
 
 # The uniform encodings are the compressed ones.
 .attribute arch, "rv32i_xvortexu1p0_c"
