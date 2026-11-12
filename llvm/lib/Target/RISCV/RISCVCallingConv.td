@@ -26,6 +26,13 @@ def CSR_ILP32D_LP64D
     : CalleeSavedRegs<(add CSR_ILP32_LP64,
                        F8_D, F9_D, (sequence "F%u_D", 18, 27))>;
 
+// XVortexU: u16-u31 are callee-saved.
+defvar CSR_U = (sequence "U%u", 16, 31);
+def CSR_ILP32E_LP64E_U : CalleeSavedRegs<(add CSR_ILP32E_LP64E, CSR_U)>;
+def CSR_ILP32_LP64_U : CalleeSavedRegs<(add CSR_ILP32_LP64, CSR_U)>;
+def CSR_ILP32F_LP64F_U : CalleeSavedRegs<(add CSR_ILP32F_LP64F, CSR_U)>;
+def CSR_ILP32D_LP64D_U : CalleeSavedRegs<(add CSR_ILP32D_LP64D, CSR_U)>;
+
 defvar CSR_V = (add (sequence "V%u", 1, 7), (sequence "V%u", 24, 31),
                      V2M2, V4M2, V6M2, V24M2, V26M2, V28M2, V30M2,
                      V4M4, V24M4, V28M4, V24M8);

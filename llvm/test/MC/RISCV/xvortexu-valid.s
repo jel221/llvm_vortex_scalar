@@ -1,7 +1,7 @@
-# RUN: llvm-mc %s -triple=riscv32 -mattr=+m,+zicond,+xvortexu -show-encoding \
+# RUN: llvm-mc %s -triple=riscv32 -mattr=+m,+f,+d,+zicond,+xvortexu -show-encoding \
 # RUN:     | FileCheck -check-prefixes=CHECK-ASM,CHECK-ASM-AND-OBJ %s
-# RUN: llvm-mc -filetype=obj -triple=riscv32 -mattr=+m,+zicond,+xvortexu < %s \
-# RUN:     | llvm-objdump --mattr=+m,+zicond,+xvortexu --no-print-imm-hex -d - \
+# RUN: llvm-mc -filetype=obj -triple=riscv32 -mattr=+m,+f,+d,+zicond,+xvortexu < %s \
+# RUN:     | llvm-objdump --mattr=+m,+f,+d,+zicond,+xvortexu --no-print-imm-hex -d - \
 # RUN:     | FileCheck --check-prefixes=CHECK-ASM-AND-OBJ,CHECK-OBJ %s
 
 # Bits 1:0 of 0b10: every register field names a u register.
@@ -290,3 +290,51 @@ u.mvx u1, a0
 # CHECK-ASM-AND-OBJ: x.mvu a0, u1
 # CHECK-ASM: encoding: [0x52,0x85,0x00,0xe2]
 x.mvu a0, u1
+
+# Bits 1:0 of 0b01: a load at a uniform address.
+# CHECK-ASM-AND-OBJ: lw a0, 8(u1)
+# CHECK-ASM: encoding: [0x01,0xa5,0x80,0x00]
+lw a0, 8(u1)
+# CHECK-ASM-AND-OBJ: lbu a0, 8(u1)
+# CHECK-ASM: encoding: [0x01,0xc5,0x80,0x00]
+lbu a0, 8(u1)
+# CHECK-ASM-AND-OBJ: flw fa0, 8(u1)
+# CHECK-ASM: encoding: [0x05,0xa5,0x80,0x00]
+flw fa0, 8(u1)
+# CHECK-ASM-AND-OBJ: fld fa0, 8(u1)
+# CHECK-ASM: encoding: [0x05,0xb5,0x80,0x00]
+fld fa0, 8(u1)
+
+# Bits 1:0 of 0b00: the first source is uniform.
+# CHECK-ASM-AND-OBJ: sub a0, u1, a2
+# CHECK-ASM: encoding: [0x30,0x85,0xc0,0x40]
+sub a0, u1, a2
+# CHECK-ASM-AND-OBJ: sltu a0, u1, a2
+# CHECK-ASM: encoding: [0x30,0xb5,0xc0,0x00]
+sltu a0, u1, a2
+# CHECK-ASM-AND-OBJ: add a0, u1, a2
+# CHECK-ASM: encoding: [0x30,0x85,0xc0,0x00]
+add a0, u1, a2
+# CHECK-ASM-AND-OBJ: czero.eqz a0, u1, a2
+# CHECK-ASM: encoding: [0x30,0xd5,0xc0,0x0e]
+czero.eqz a0, u1, a2
+# CHECK-ASM: blt u1, a0, 16
+# CHECK-OBJ: blt u1, a0, {{0x[0-9a-f]+}}
+# CHECK-ASM: encoding: [0x60,0xc8,0xa0,0x00]
+blt u1, a0, 16
+# CHECK-ASM: bgeu u1, a0, 16
+# CHECK-OBJ: bgeu u1, a0, {{0x[0-9a-f]+}}
+# CHECK-ASM: encoding: [0x60,0xf8,0xa0,0x00]
+bgeu u1, a0, 16
+# CHECK-ASM-AND-OBJ: sw a0, 4(u1)
+# CHECK-ASM: encoding: [0x20,0xa2,0xa0,0x00]
+sw a0, 4(u1)
+# CHECK-ASM-AND-OBJ: sb a0, 4(u1)
+# CHECK-ASM: encoding: [0x20,0x82,0xa0,0x00]
+sb a0, 4(u1)
+# CHECK-ASM-AND-OBJ: fsw fa0, 4(u1)
+# CHECK-ASM: encoding: [0x24,0xa2,0xa0,0x00]
+fsw fa0, 4(u1)
+# CHECK-ASM-AND-OBJ: fsd fa0, 4(u1)
+# CHECK-ASM: encoding: [0x24,0xb2,0xa0,0x00]
+fsd fa0, 4(u1)

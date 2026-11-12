@@ -2,6 +2,7 @@
 
 #include <memory>
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Passes/PassBuilder.h"
 
@@ -129,6 +130,10 @@ private:
 
 // Whether Ptr may point into a thread's stack (its function's private memory).
 bool vortexMayPointToPrivate(const Value *Ptr);
+
+// A `__kernel` entry (`vortex.kernel` annotation or the "vortex-kernel"
+// attribute), entered only through the CTA trampoline.
+bool isVortexKernelEntry(const Function &F);
 
 class DivergenceTracker {
 public:

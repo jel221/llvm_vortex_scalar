@@ -1139,19 +1139,22 @@ static RISCVCC::CondCode getCondFromBranchOpc(unsigned Opc) {
     return RISCVCC::COND_LTU;
   case RISCV::BGEU:
     return RISCVCC::COND_GEU;
-  case RISCV::VXU_BEQ:  case RISCV::VXUO_BEQ:  return RISCVCC::COND_EQ;
-  case RISCV::VXU_BNE:  case RISCV::VXUO_BNE:  return RISCVCC::COND_NE;
-  case RISCV::VXU_BLT:  case RISCV::VXUO_BLT:  return RISCVCC::COND_LT;
-  case RISCV::VXU_BGE:  case RISCV::VXUO_BGE:  return RISCVCC::COND_GE;
-  case RISCV::VXU_BLTU: case RISCV::VXUO_BLTU: return RISCVCC::COND_LTU;
-  case RISCV::VXU_BGEU: case RISCV::VXUO_BGEU: return RISCVCC::COND_GEU;
+  case RISCV::VXU_BEQ:  case RISCV::VXUO_BEQ:  case RISCV::VXUF_BEQ:  return RISCVCC::COND_EQ;
+  case RISCV::VXU_BNE:  case RISCV::VXUO_BNE:  case RISCV::VXUF_BNE:  return RISCVCC::COND_NE;
+  case RISCV::VXU_BLT:  case RISCV::VXUO_BLT:  case RISCV::VXUF_BLT:  return RISCVCC::COND_LT;
+  case RISCV::VXU_BGE:  case RISCV::VXUO_BGE:  case RISCV::VXUF_BGE:  return RISCVCC::COND_GE;
+  case RISCV::VXU_BLTU: case RISCV::VXUO_BLTU: case RISCV::VXUF_BLTU: return RISCVCC::COND_LTU;
+  case RISCV::VXU_BGEU: case RISCV::VXUO_BGEU: case RISCV::VXUF_BGEU: return RISCVCC::COND_GEU;
   }
 }
 
 // XVortexU branches keep their register files in the condition: the mode sits
 // above the condition code in Cond[0] (0 standard, 1 uniform, 2 uniform second
-// operand), so passes that match standard condition codes skip them.
-enum : unsigned { BrModeShift = 8, BrModeStd = 0, BrModeU = 1, BrModeUO = 2 };
+// operand, 3 uniform first operand), so passes that match standard condition
+// codes skip them.
+enum : unsigned {
+  BrModeShift = 8, BrModeStd = 0, BrModeU = 1, BrModeUO = 2, BrModeUF = 3
+};
 
 static unsigned getBranchMode(unsigned Opc) {
   switch (Opc) {
@@ -1161,6 +1164,9 @@ static unsigned getBranchMode(unsigned Opc) {
   case RISCV::VXUO_BEQ: case RISCV::VXUO_BNE: case RISCV::VXUO_BLT:
   case RISCV::VXUO_BGE: case RISCV::VXUO_BLTU: case RISCV::VXUO_BGEU:
     return BrModeUO;
+  case RISCV::VXUF_BEQ: case RISCV::VXUF_BNE: case RISCV::VXUF_BLT:
+  case RISCV::VXUF_BGE: case RISCV::VXUF_BLTU: case RISCV::VXUF_BGEU:
+    return BrModeUF;
   default:
     return BrModeStd;
   }
@@ -1171,6 +1177,8 @@ static unsigned getUniformBrOpc(RISCVCC::CondCode CC, unsigned Mode) {
                                 RISCV::VXU_BGE, RISCV::VXU_BLTU, RISCV::VXU_BGEU};
   static const unsigned UO[] = {RISCV::VXUO_BEQ, RISCV::VXUO_BNE, RISCV::VXUO_BLT,
                                 RISCV::VXUO_BGE, RISCV::VXUO_BLTU, RISCV::VXUO_BGEU};
+  static const unsigned UF[] = {RISCV::VXUF_BEQ, RISCV::VXUF_BNE, RISCV::VXUF_BLT,
+                                RISCV::VXUF_BGE, RISCV::VXUF_BLTU, RISCV::VXUF_BGEU};
   unsigned I;
   switch (CC) {
   case RISCVCC::COND_EQ:  I = 0; break;
@@ -1181,7 +1189,7 @@ static unsigned getUniformBrOpc(RISCVCC::CondCode CC, unsigned Mode) {
   case RISCVCC::COND_GEU: I = 5; break;
   default: llvm_unreachable("Unknown condition code!");
   }
-  return Mode == BrModeU ? U[I] : UO[I];
+  return Mode == BrModeU ? U[I] : Mode == BrModeUO ? UO[I] : UF[I];
 }
 
 // The contents of values added to Cond are not examined outside of
@@ -1617,6 +1625,12 @@ bool RISCVInstrInfo::isBranchOffsetInRange(unsigned BranchOp,
   case RISCV::VXUO_BGE:
   case RISCV::VXUO_BLTU:
   case RISCV::VXUO_BGEU:
+  case RISCV::VXUF_BEQ:
+  case RISCV::VXUF_BNE:
+  case RISCV::VXUF_BLT:
+  case RISCV::VXUF_BGE:
+  case RISCV::VXUF_BLTU:
+  case RISCV::VXUF_BGEU:
     return isIntN(13, BrOffset);
   case RISCV::JAL:
   case RISCV::PseudoBR:

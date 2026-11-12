@@ -855,6 +855,35 @@ static bool mayPointToPrivate(const Value *V, const dv_info_t *dv_info,
   return false;
 }
 
+bool isVortexKernelEntry(const Function &F) {
+  if (F.hasFnAttribute("vortex-kernel"))
+    return true;
+  const Module *M = F.getParent();
+  if (!M)
+    return false;
+  const GlobalVariable *GA = M->getGlobalVariable("llvm.global.annotations");
+  if (!GA || !GA->hasInitializer())
+    return false;
+  const auto *CA = dyn_cast<ConstantArray>(GA->getInitializer());
+  if (!CA)
+    return false;
+  for (const Value *Op : CA->operands()) {
+    const auto *CS = dyn_cast<ConstantStruct>(Op);
+    if (!CS || CS->getNumOperands() < 2)
+      continue;
+    if (CS->getOperand(0)->stripPointerCasts() != &F)
+      continue;
+    const auto *StrGV =
+        dyn_cast<GlobalVariable>(CS->getOperand(1)->stripPointerCasts());
+    if (!StrGV || !StrGV->hasInitializer())
+      continue;
+    const auto *Str = dyn_cast<ConstantDataArray>(StrGV->getInitializer());
+    if (Str && Str->isCString() && Str->getAsCString() == "vortex.kernel")
+      return true;
+  }
+  return false;
+}
+
 bool vortexMayPointToPrivate(const Value *Ptr) {
   const Function *F = nullptr;
   if (auto I = dyn_cast<Instruction>(Ptr))
@@ -2090,6 +2119,11 @@ bool DivergenceTracker::isSourceOfDivergence(const Value *V) {
   // We conservatively assume all function arguments to potentially be divergent
   // except when they are marked as uniform.
   if (auto Arg = dyn_cast<Argument>(V)) {
+    // a kernel's argument block, the same CSR value in every thread
+    if (Arg->getArgNo() == 0 && isVortexKernelEntry(*Arg->getParent())) {
+      LLVM_DEBUG(dbgs() << "*** VX: divergent=false for kernel argument: " << *V << "\n");
+      return false;
+    }
     if (dv_info_->isUniformInArg(Arg)) {
       LLVM_DEBUG(dbgs() << "*** VX: divergent=false for argument: " << *V << "\n");
       return false; // uniform

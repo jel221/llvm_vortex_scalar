@@ -298,9 +298,12 @@ def FPRG8 : RISCVRegisterClass<[v8f32], 32, (add
 // Uniform registers (XVortexU): one XLEN-bit file per warp; u0 reads zero.
 //===----------------------------------------------------------------------===//
 
+// DWARF numbers in the range the psABI reserves for custom extensions.
 let Namespace = "RISCV" in {
-foreach Index = 0-31 in
-  def U#Index : RISCVReg<Index, "u"#Index>;
+let isConstant = true in
+def U0 : RISCVReg<0, "u0">, DwarfRegNum<[3072]>;
+foreach Index = 1-31 in
+  def U#Index : RISCVReg<Index, "u"#Index>, DwarfRegNum<[!add(3072, Index)]>;
 }
 
 def UGPR : RISCVRegisterClass<[XLenVT], 32, (add (sequence "U%u", 0, 31))> {

@@ -866,10 +866,9 @@ DecodeStatus RISCVDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
                                                ArrayRef<uint8_t> Bytes,
                                                uint64_t Address,
                                                raw_ostream &CS) const {
-  // With XVortexU, bits 1:0 of 0b10 and 0b01 mark a 32-bit instruction on the
-  // uniform register file.
-  if ((Bytes[0] & 0b11) != 0b11 && (Bytes[0] & 0b11) != 0b00 &&
-      STI.hasFeature(RISCV::FeatureVendorXVortexU))
+  // With XVortexU (no C), bits 1:0 other than 0b11 mark a 32-bit instruction
+  // on the uniform register file.
+  if ((Bytes[0] & 0b11) != 0b11 && STI.hasFeature(RISCV::FeatureVendorXVortexU))
     return getInstructionXVortexU(MI, Size, Bytes, Address, CS);
 
   // It's a 16 bit instruction if bit 0 and 1 are not 0b11.

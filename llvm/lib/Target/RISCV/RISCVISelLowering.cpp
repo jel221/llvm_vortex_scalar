@@ -2069,6 +2069,8 @@ bool RISCVTargetLowering::isSDNodeSourceOfDivergence(
       return true;
     const MachineRegisterInfo &MRI = FLI->MF->getRegInfo();
     if (MCRegister Phys = MRI.getLiveInPhysReg(Reg)) {
+      if (RISCV::UGPRRegClass.contains(Phys))
+        return false;
       // An argument in a0-a7, when every argument before it takes one GPR.
       const Function &F = *FLI->Fn;
       if (Phys < RISCV::X10 || Phys > RISCV::X17)
@@ -10460,6 +10462,8 @@ SDValue RISCVTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   default:
     break; // Don't custom lower most intrinsics.
   case Intrinsic::riscv_vx_uniform:
+    if (!Subtarget.hasVendorXVortexU())
+      return Op.getOperand(1);
     return DAG.getNode(RISCVISD::VX_UNIFORM, DL, Op.getValueType(), Op.getOperand(1));
   case Intrinsic::riscv_tuple_insert: {
     SDValue Vec = Op.getOperand(1);
@@ -21264,6 +21268,8 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
                      CallConv == CallingConv::Fast ? CC_RISCV_FastCC
                                                    : CC_RISCV);
 
+  bool KernelArgInU = Subtarget.hasVendorXVortexU() && !IsVarArg &&
+                      vortex::isVortexKernelEntry(Func);
   for (unsigned i = 0, e = ArgLocs.size(), InsIdx = 0; i != e; ++i, ++InsIdx) {
     CCValAssign &VA = ArgLocs[i];
     SDValue ArgValue;
@@ -21272,6 +21278,15 @@ SDValue RISCVTargetLowering::LowerFormalArguments(
     if (VA.getLocVT() == MVT::i32 && VA.getValVT() == MVT::f64) {
       assert(VA.needsCustom());
       ArgValue = unpackF64OnRV32DSoftABI(DAG, Chain, VA, ArgLocs[++i], DL);
+    } else if (KernelArgInU && i == 0 && VA.isRegLoc() &&
+               VA.getLocReg() == RISCV::X10 &&
+               VA.getLocInfo() == CCValAssign::Full &&
+               VA.getLocVT() == XLenVT && Ins[InsIdx].isOrigArg() &&
+               Ins[InsIdx].getOrigArgIndex() == 0) {
+      // The CTA trampoline hands a kernel its argument block in u10.
+      Register VReg = MF.getRegInfo().createVirtualRegister(&RISCV::UGPRRegClass);
+      MF.getRegInfo().addLiveIn(RISCV::U10, VReg);
+      ArgValue = DAG.getCopyFromReg(Chain, DL, VReg, XLenVT);
     } else if (VA.isRegLoc())
       ArgValue = unpackFromRegLoc(DAG, Chain, VA, DL, Ins[InsIdx], *this);
     else

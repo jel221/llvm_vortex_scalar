@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCVRegisterInfo.h"
+#include "VortexBranchDivergence.h"
 #include "RISCV.h"
 #include "RISCVSubtarget.h"
 #include "llvm/ADT/SmallSet.h"
@@ -82,41 +83,12 @@ RISCVRegisterInfo::RISCVRegisterInfo(unsigned HwMode)
 // PEI for leaf kernels automatically (saved only when actually clobbered).
 static const MCPhysReg CSR_VortexKernel_SaveList[] = {RISCV::X1, 0};
 
-static bool isVortexKernelEntry(const Function &F) {
-  if (F.hasFnAttribute("vortex-kernel"))
-    return true;
-  const Module *M = F.getParent();
-  if (!M)
-    return false;
-  const GlobalVariable *GA = M->getGlobalVariable("llvm.global.annotations");
-  if (!GA || !GA->hasInitializer())
-    return false;
-  const auto *CA = dyn_cast<ConstantArray>(GA->getInitializer());
-  if (!CA)
-    return false;
-  for (const Value *Op : CA->operands()) {
-    const auto *CS = dyn_cast<ConstantStruct>(Op);
-    if (!CS || CS->getNumOperands() < 2)
-      continue;
-    if (CS->getOperand(0)->stripPointerCasts() != &F)
-      continue;
-    const auto *StrGV =
-        dyn_cast<GlobalVariable>(CS->getOperand(1)->stripPointerCasts());
-    if (!StrGV || !StrGV->hasInitializer())
-      continue;
-    const auto *Str = dyn_cast<ConstantDataArray>(StrGV->getInitializer());
-    if (Str && Str->isCString() && Str->getAsCString() == "vortex.kernel")
-      return true;
-  }
-  return false;
-}
-
 const MCPhysReg *
 RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   auto &Subtarget = MF->getSubtarget<RISCVSubtarget>();
   if (MF->getFunction().getCallingConv() == CallingConv::GHC)
     return CSR_NoRegs_SaveList;
-  if (isVortexKernelEntry(MF->getFunction()))
+  if (vortex::isVortexKernelEntry(MF->getFunction()))
     return CSR_VortexKernel_SaveList;
   if (MF->getFunction().hasFnAttribute("interrupt")) {
     if (Subtarget.hasStdExtD())
@@ -132,27 +104,29 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
       MF->getFunction().getCallingConv() == CallingConv::RISCV_VectorCall &&
       Subtarget.hasVInstructions();
 
+  bool HasU = Subtarget.hasVendorXVortexU();
+
   switch (Subtarget.getTargetABI()) {
   default:
     llvm_unreachable("Unrecognized ABI");
   case RISCVABI::ABI_ILP32E:
   case RISCVABI::ABI_LP64E:
-    return CSR_ILP32E_LP64E_SaveList;
+    return HasU ? CSR_ILP32E_LP64E_U_SaveList : CSR_ILP32E_LP64E_SaveList;
   case RISCVABI::ABI_ILP32:
   case RISCVABI::ABI_LP64:
     if (HasVectorCSR)
       return CSR_ILP32_LP64_V_SaveList;
-    return CSR_ILP32_LP64_SaveList;
+    return HasU ? CSR_ILP32_LP64_U_SaveList : CSR_ILP32_LP64_SaveList;
   case RISCVABI::ABI_ILP32F:
   case RISCVABI::ABI_LP64F:
     if (HasVectorCSR)
       return CSR_ILP32F_LP64F_V_SaveList;
-    return CSR_ILP32F_LP64F_SaveList;
+    return HasU ? CSR_ILP32F_LP64F_U_SaveList : CSR_ILP32F_LP64F_SaveList;
   case RISCVABI::ABI_ILP32D:
   case RISCVABI::ABI_LP64D:
     if (HasVectorCSR)
       return CSR_ILP32D_LP64D_V_SaveList;
-    return CSR_ILP32D_LP64D_SaveList;
+    return HasU ? CSR_ILP32D_LP64D_U_SaveList : CSR_ILP32D_LP64D_SaveList;
   }
 }
 
@@ -170,9 +144,6 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     if (isConstantPhysReg(Reg))
       markSuperRegs(Reserved, Reg);
   }
-
-  // u0 reads zero
-  markSuperRegs(Reserved, RISCV::U0);
 
   // Use markSuperRegs to ensure any register aliases are also reserved
   markSuperRegs(Reserved, RISCV::X2_H); // sp
@@ -828,27 +799,28 @@ RISCVRegisterInfo::getCallPreservedMask(const MachineFunction & MF,
 
   if (CC == CallingConv::GHC)
     return CSR_NoRegs_RegMask;
+  bool HasU = Subtarget.hasVendorXVortexU();
   switch (Subtarget.getTargetABI()) {
   default:
     llvm_unreachable("Unrecognized ABI");
   case RISCVABI::ABI_ILP32E:
   case RISCVABI::ABI_LP64E:
-    return CSR_ILP32E_LP64E_RegMask;
+    return HasU ? CSR_ILP32E_LP64E_U_RegMask : CSR_ILP32E_LP64E_RegMask;
   case RISCVABI::ABI_ILP32:
   case RISCVABI::ABI_LP64:
     if (CC == CallingConv::RISCV_VectorCall)
       return CSR_ILP32_LP64_V_RegMask;
-    return CSR_ILP32_LP64_RegMask;
+    return HasU ? CSR_ILP32_LP64_U_RegMask : CSR_ILP32_LP64_RegMask;
   case RISCVABI::ABI_ILP32F:
   case RISCVABI::ABI_LP64F:
     if (CC == CallingConv::RISCV_VectorCall)
       return CSR_ILP32F_LP64F_V_RegMask;
-    return CSR_ILP32F_LP64F_RegMask;
+    return HasU ? CSR_ILP32F_LP64F_U_RegMask : CSR_ILP32F_LP64F_RegMask;
   case RISCVABI::ABI_ILP32D:
   case RISCVABI::ABI_LP64D:
     if (CC == CallingConv::RISCV_VectorCall)
       return CSR_ILP32D_LP64D_V_RegMask;
-    return CSR_ILP32D_LP64D_RegMask;
+    return HasU ? CSR_ILP32D_LP64D_U_RegMask : CSR_ILP32D_LP64D_RegMask;
   }
 }
 

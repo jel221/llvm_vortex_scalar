@@ -11,7 +11,9 @@
 //   0b10 uniform: every register field names a u register.
 //   0b01 uniform operand: a per-thread instruction whose second source is a
 //        u register (xd = xs1 op us2, xd = us1 op imm, xs1 cmp us2, a uniform
-//        store value).
+//        store value, a load at a uniform address).
+//   0b00 uniform first operand: xd = us1 op xs2, us1 cmp xs2, a store at a
+//        uniform address.
 // Uniform registers are XLEN bits wide and the instructions keep the base ISA's
 // semantics (the W forms, ld/sd and lwu on RV64 only). The mnemonics are the
 // standard ones; the operands' register classes pick the encoding.
@@ -89,6 +91,7 @@ def VXU_REMW   : VXU_rr<0b0000001, 0b110, OPC_OP_32, "remw">;
 let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_REMUW  : VXU_rr<0b0000001, 0b111, OPC_OP_32, "remuw">;
 
+let isReMaterializable = 1, isAsCheapAsAMove = 1 in
 def VXU_ADDI   : VXU_ri<0b000, OPC_OP_IMM, "addi">;
 def VXU_SLTI   : VXU_ri<0b010, OPC_OP_IMM, "slti">;
 def VXU_SLTIU  : VXU_ri<0b011, OPC_OP_IMM, "sltiu">;
@@ -108,6 +111,7 @@ let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXU_SRAIW  : VXU_shiftw<0b0100000, 0b101, "sraiw">;
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
+let isReMaterializable = 1, isAsCheapAsAMove = 1 in
 def VXU_LUI   : RVInstU<OPC_LUI, (outs UGPR:$rd), (ins uimm20_lui:$imm20),
                         "lui", "$rd, $imm20"> {
   let Inst{1-0} = 0b10;
@@ -308,6 +312,108 @@ def VXUO_SW : VXUO_store<0b010, "sw">;
 let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_SD : VXUO_store<0b011, "sd">;
 
+// Loads at a uniform address into a per-thread register: every lane reads the
+// same word.
+let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in
+class VXUO_load<bits<3> funct3, RISCVOpcode opcode, RegisterClass rc, string opcodestr>
+    : RVInstI<funct3, opcode, (outs rc:$rd), (ins UGPR:$rs1, simm12:$imm12),
+              opcodestr, "$rd, ${imm12}(${rs1})"> {
+  let Inst{1-0} = 0b01;
+}
+
+def VXUO_LB  : VXUO_load<0b000, OPC_LOAD, GPR, "lb">;
+def VXUO_LH  : VXUO_load<0b001, OPC_LOAD, GPR, "lh">;
+def VXUO_LW  : VXUO_load<0b010, OPC_LOAD, GPR, "lw">;
+def VXUO_LBU : VXUO_load<0b100, OPC_LOAD, GPR, "lbu">;
+def VXUO_LHU : VXUO_load<0b101, OPC_LOAD, GPR, "lhu">;
+let Predicates = [HasVendorXVortexU, IsRV64] in {
+def VXUO_LD  : VXUO_load<0b011, OPC_LOAD, GPR, "ld">;
+def VXUO_LWU : VXUO_load<0b110, OPC_LOAD, GPR, "lwu">;
+}
+let Predicates = [HasVendorXVortexU, HasStdExtF] in
+def VXUO_FLW : VXUO_load<0b010, OPC_LOAD_FP, FPR32, "flw">;
+let Predicates = [HasVendorXVortexU, HasStdExtD] in
+def VXUO_FLD : VXUO_load<0b011, OPC_LOAD_FP, FPR64, "fld">;
+
+//===----------------------------------------------------------------------===//
+// Mode 0b00: uniform first operand
+//===----------------------------------------------------------------------===//
+
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
+class VXUF_rr<bits<7> funct7, bits<3> funct3, RISCVOpcode opcode, string opcodestr>
+    : RVInstR<funct7, funct3, opcode, (outs GPR:$rd), (ins UGPR:$rs1, GPR:$rs2),
+              opcodestr, "$rd, $rs1, $rs2"> {
+  let Inst{1-0} = 0b00;
+}
+
+def VXUF_ADD    : VXUF_rr<0b0000000, 0b000, OPC_OP, "add">;
+def VXUF_SUB    : VXUF_rr<0b0100000, 0b000, OPC_OP, "sub">;
+def VXUF_SLL    : VXUF_rr<0b0000000, 0b001, OPC_OP, "sll">;
+def VXUF_SLT    : VXUF_rr<0b0000000, 0b010, OPC_OP, "slt">;
+def VXUF_SLTU   : VXUF_rr<0b0000000, 0b011, OPC_OP, "sltu">;
+def VXUF_XOR    : VXUF_rr<0b0000000, 0b100, OPC_OP, "xor">;
+def VXUF_SRL    : VXUF_rr<0b0000000, 0b101, OPC_OP, "srl">;
+def VXUF_SRA    : VXUF_rr<0b0100000, 0b101, OPC_OP, "sra">;
+def VXUF_OR     : VXUF_rr<0b0000000, 0b110, OPC_OP, "or">;
+def VXUF_AND    : VXUF_rr<0b0000000, 0b111, OPC_OP, "and">;
+def VXUF_MUL    : VXUF_rr<0b0000001, 0b000, OPC_OP, "mul">;
+def VXUF_MULH   : VXUF_rr<0b0000001, 0b001, OPC_OP, "mulh">;
+def VXUF_MULHSU : VXUF_rr<0b0000001, 0b010, OPC_OP, "mulhsu">;
+def VXUF_MULHU  : VXUF_rr<0b0000001, 0b011, OPC_OP, "mulhu">;
+def VXUF_DIV    : VXUF_rr<0b0000001, 0b100, OPC_OP, "div">;
+def VXUF_DIVU   : VXUF_rr<0b0000001, 0b101, OPC_OP, "divu">;
+def VXUF_REM    : VXUF_rr<0b0000001, 0b110, OPC_OP, "rem">;
+def VXUF_REMU   : VXUF_rr<0b0000001, 0b111, OPC_OP, "remu">;
+def VXUF_CZERO_EQZ : VXUF_rr<0b0000111, 0b101, OPC_OP, "czero.eqz">;
+def VXUF_CZERO_NEZ : VXUF_rr<0b0000111, 0b111, OPC_OP, "czero.nez">;
+
+let Predicates = [HasVendorXVortexU, IsRV64] in {
+def VXUF_ADDW   : VXUF_rr<0b0000000, 0b000, OPC_OP_32, "addw">;
+def VXUF_SUBW   : VXUF_rr<0b0100000, 0b000, OPC_OP_32, "subw">;
+def VXUF_SLLW   : VXUF_rr<0b0000000, 0b001, OPC_OP_32, "sllw">;
+def VXUF_SRLW   : VXUF_rr<0b0000000, 0b101, OPC_OP_32, "srlw">;
+def VXUF_SRAW   : VXUF_rr<0b0100000, 0b101, OPC_OP_32, "sraw">;
+def VXUF_MULW   : VXUF_rr<0b0000001, 0b000, OPC_OP_32, "mulw">;
+def VXUF_DIVW   : VXUF_rr<0b0000001, 0b100, OPC_OP_32, "divw">;
+def VXUF_DIVUW  : VXUF_rr<0b0000001, 0b101, OPC_OP_32, "divuw">;
+def VXUF_REMW   : VXUF_rr<0b0000001, 0b110, OPC_OP_32, "remw">;
+def VXUF_REMUW  : VXUF_rr<0b0000001, 0b111, OPC_OP_32, "remuw">;
+}
+
+let isBranch = 1, isTerminator = 1, hasSideEffects = 0, mayLoad = 0,
+    mayStore = 0 in
+class VXUF_branch<bits<3> funct3, string opcodestr>
+    : RVInstB<funct3, OPC_BRANCH, (outs),
+              (ins UGPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+              opcodestr, "$rs1, $rs2, $imm12"> {
+  let Inst{1-0} = 0b00;
+}
+
+def VXUF_BEQ  : VXUF_branch<0b000, "beq">;
+def VXUF_BNE  : VXUF_branch<0b001, "bne">;
+def VXUF_BLT  : VXUF_branch<0b100, "blt">;
+def VXUF_BGE  : VXUF_branch<0b101, "bge">;
+def VXUF_BLTU : VXUF_branch<0b110, "bltu">;
+def VXUF_BGEU : VXUF_branch<0b111, "bgeu">;
+
+// Stores at a uniform address of a per-thread value.
+let hasSideEffects = 0, mayLoad = 0, mayStore = 1 in
+class VXUF_store<bits<3> funct3, RISCVOpcode opcode, RegisterClass rc, string opcodestr>
+    : RVInstS<funct3, opcode, (outs), (ins rc:$rs2, UGPR:$rs1, simm12:$imm12),
+              opcodestr, "$rs2, ${imm12}(${rs1})"> {
+  let Inst{1-0} = 0b00;
+}
+
+def VXUF_SB : VXUF_store<0b000, OPC_STORE, GPR, "sb">;
+def VXUF_SH : VXUF_store<0b001, OPC_STORE, GPR, "sh">;
+def VXUF_SW : VXUF_store<0b010, OPC_STORE, GPR, "sw">;
+let Predicates = [HasVendorXVortexU, IsRV64] in
+def VXUF_SD : VXUF_store<0b011, OPC_STORE, GPR, "sd">;
+let Predicates = [HasVendorXVortexU, HasStdExtF] in
+def VXUF_FSW : VXUF_store<0b010, OPC_STORE_FP, FPR32, "fsw">;
+let Predicates = [HasVendorXVortexU, HasStdExtD] in
+def VXUF_FSD : VXUF_store<0b011, OPC_STORE_FP, FPR64, "fsd">;
+
 } // Predicates = [HasVendorXVortexU], DecoderNamespace = "XVortexU"
 
 //===----------------------------------------------------------------------===//
@@ -360,6 +466,23 @@ def : PatUImm<setult, VXU_SLTIU, simm12>;
 def : PatUImm<shl, VXU_SLLI, uimmlog2xlen>;
 def : PatUImm<srl, VXU_SRLI, uimmlog2xlen>;
 def : PatUImm<sra, VXU_SRAI, uimmlog2xlen>;
+
+def : Pat<(XLenVT (VXUniform2<seteq> (XLenVT UGPR:$a), 0)), (VXU_SLTIU UGPR:$a, 1)>;
+def : Pat<(XLenVT (VXUniform2<setne> (XLenVT UGPR:$a), 0)),
+          (VXU_SLTU (XLenVT U0), UGPR:$a)>;
+def : Pat<(XLenVT (VXUniform2<seteq> (XLenVT UGPR:$a), (XLenVT UGPR:$b))),
+          (VXU_SLTIU (VXU_XOR UGPR:$a, UGPR:$b), 1)>;
+def : Pat<(XLenVT (VXUniform2<setne> (XLenVT UGPR:$a), (XLenVT UGPR:$b))),
+          (VXU_SLTU (XLenVT U0), (VXU_XOR UGPR:$a, UGPR:$b))>;
+def : Pat<(XLenVT (VXUniform2<seteq> (XLenVT UGPR:$a), simm12:$i)),
+          (VXU_SLTIU (VXU_XORI UGPR:$a, simm12:$i), 1)>;
+def : Pat<(XLenVT (VXUniform2<setne> (XLenVT UGPR:$a), simm12:$i)),
+          (VXU_SLTU (XLenVT U0), (VXU_XORI UGPR:$a, simm12:$i))>;
+
+let Predicates = [HasVendorXVortexU, HasStdExtZicond] in {
+def : PatUU<riscv_czero_eqz, VXU_CZERO_EQZ>;
+def : PatUU<riscv_czero_nez, VXU_CZERO_NEZ>;
+}
 
 let Predicates = [HasVendorXVortexU, HasStdExtM] in {
 def : PatUU<mul,   VXU_MUL>;
@@ -414,6 +537,18 @@ defm : PatUBcc<SETLT,  VXU_BLT>;
 defm : PatUBcc<SETGE,  VXU_BGE>;
 defm : PatUBcc<SETULT, VXU_BLTU>;
 defm : PatUBcc<SETUGE, VXU_BGEU>;
+
+// A compare with zero reads u0.
+multiclass PatUBccZ<CondCode Cond, RVInstB Inst> {
+  def : Pat<(vxu_brcc (XLenVT UGPR:$rs1), 0, Cond, bb:$imm12),
+            (Inst UGPR:$rs1, (XLenVT U0), simm13_lsb0:$imm12)>;
+}
+defm : PatUBccZ<SETEQ,  VXU_BEQ>;
+defm : PatUBccZ<SETNE,  VXU_BNE>;
+defm : PatUBccZ<SETLT,  VXU_BLT>;
+defm : PatUBccZ<SETGE,  VXU_BGE>;
+defm : PatUBccZ<SETULT, VXU_BLTU>;
+defm : PatUBccZ<SETUGE, VXU_BGEU>;
 
 } // Predicates = [HasVendorXVortexU], AddedComplexity = 20
 
