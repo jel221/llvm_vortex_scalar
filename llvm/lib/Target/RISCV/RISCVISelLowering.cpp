@@ -2065,12 +2065,14 @@ bool RISCVTargetLowering::isSDNodeSourceOfDivergence(
   switch (N->getOpcode()) {
   case ISD::CopyFromReg: {
     Register Reg = cast<RegisterSDNode>(N->getOperand(1))->getReg();
+    const MachineRegisterInfo &MRI = FLI->MF->getRegInfo();
+    // a u register holds one value per warp
+    if (Reg.isPhysical() ? RISCV::UGPRRegClass.contains(Reg)
+                         : MRI.getRegClass(Reg) == &RISCV::UGPRRegClass)
+      return false;
     if (Reg.isPhysical())
       return true;
-    const MachineRegisterInfo &MRI = FLI->MF->getRegInfo();
     if (MCRegister Phys = MRI.getLiveInPhysReg(Reg)) {
-      if (RISCV::UGPRRegClass.contains(Phys))
-        return false;
       // An argument in a0-a7, when every argument before it takes one GPR.
       const Function &F = *FLI->Fn;
       if (Phys < RISCV::X10 || Phys > RISCV::X17)

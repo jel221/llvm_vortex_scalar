@@ -2251,6 +2251,21 @@ bool DivergenceTracker::isAlwaysUniform(const Value *V) {
       }
     } else
     if (CB->isInlineAsm()) {
+      // An asm whose results are uniform registers (the vu constraint): a u
+      // register holds one value per warp.
+      bool HasOutput = false, AllUniform = true;
+      for (const InlineAsm::ConstraintInfo &C :
+           cast<InlineAsm>(CB->getCalledOperand())->ParseConstraints()) {
+        if (C.Type != InlineAsm::isOutput)
+          continue;
+        HasOutput = true;
+        AllUniform &= (C.Codes.size() == 1 &&
+                       (C.Codes[0] == "^vu" || C.Codes[0] == "vu"));
+      }
+      if (HasOutput && AllUniform) {
+        LLVM_DEBUG(dbgs() << "*** VX: uniform=true for uniform-register asm: " << *V << "\n");
+        return true;
+      }
       // All machine CSRs and some special user CSRs are always uniform
       if (auto CSR = getInlineAsmCSR(*CB)) {
         uint64_t Addr = *CSR;
