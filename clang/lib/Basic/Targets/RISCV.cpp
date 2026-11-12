@@ -116,8 +116,8 @@ bool RISCVTargetInfo::validateAsmConstraint(
     Info.setAllowsRegister();
     return true;
   case 'v':
-    // A vector register.
-    if (Name[1] == 'r' || Name[1] == 'd' || Name[1] == 'm') {
+    // A vector register, or (vu) a Vortex uniform register.
+    if (Name[1] == 'r' || Name[1] == 'd' || Name[1] == 'm' || Name[1] == 'u') {
       Info.setAllowsRegister();
       Name += 1;
       return true;

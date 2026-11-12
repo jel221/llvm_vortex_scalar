@@ -22245,7 +22245,8 @@ RISCVTargetLowering::getConstraintType(StringRef Constraint) const {
       return C_Other;
     }
   } else {
-    if (Constraint == "vr" || Constraint == "vd" || Constraint == "vm")
+    if (Constraint == "vr" || Constraint == "vd" || Constraint == "vm" ||
+        Constraint == "vu")
       return C_RegisterClass;
     if (Constraint == "cr" || Constraint == "cR" || Constraint == "cf" ||
         Constraint == "cg")
@@ -22326,6 +22327,10 @@ RISCVTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
   } else if (Constraint == "vm") {
     if (TRI->isTypeLegalForClass(RISCV::VMV0RegClass, VT.SimpleTy))
       return std::make_pair(0U, &RISCV::VMV0RegClass);
+  } else if (Constraint == "vu") {
+    // XVortexU: a uniform register
+    if (Subtarget.hasVendorXVortexU() && VT == Subtarget.getXLenVT())
+      return std::make_pair(0U, &RISCV::UGPRRegClass);
   } else if (Constraint == "cr") {
     if (VT == MVT::f16 && Subtarget.hasStdExtZhinxmin())
       return std::make_pair(0U, &RISCV::GPRF16CRegClass);
