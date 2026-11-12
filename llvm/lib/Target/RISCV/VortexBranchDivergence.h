@@ -127,6 +127,9 @@ private:
   static llvm::sys::Mutex mutex_;
 };
 
+// Whether Ptr may point into a thread's stack (its function's private memory).
+bool vortexMayPointToPrivate(const Value *Ptr);
+
 class DivergenceTracker {
 public:
   DivergenceTracker(const Function &F);

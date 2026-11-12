@@ -46,6 +46,9 @@
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/CodeGen/FunctionLoweringInfo.h"
+#include "VortexBranchDivergence.h"
+#include "llvm/Analysis/UniformityAnalysis.h"
 #include <optional>
 
 using namespace llvm;
@@ -2037,6 +2040,98 @@ bool RISCVTargetLowering::isLegalAddressingMode(const DataLayout &DL,
 
 bool RISCVTargetLowering::isLegalICmpImmediate(int64_t Imm) const {
   return isInt<12>(Imm);
+}
+
+// Divergence sources for XVortexU, which selects warp-uniform nodes into the
+// u registers: stack addresses (each thread has its own stack), accesses that
+// may reach a thread's stack, atomics, and values whose uniformity is unknown
+// here. Values crossing blocks and incoming
+// arguments take the IR uniformity analysis.
+bool RISCVTargetLowering::isSDNodeSourceOfDivergence(
+    const SDNode *N, FunctionLoweringInfo *FLI, UniformityInfo *UA) const {
+  if (!Subtarget.hasVendorXVortexU())
+    return false;
+  if (N->getOpcode() == ISD::EntryToken)
+    return false;
+  if (!FLI || !UA)
+    return true;
+  // A stack address is per-thread: each thread has its own sp. The DAG takes a
+  // frame index leaf as uniform, so the node that reads one is the source.
+  for (const SDUse &Op : N->ops()) {
+    unsigned Opc = Op.getNode()->getOpcode();
+    if (Opc == ISD::FrameIndex || Opc == ISD::TargetFrameIndex)
+      return true;
+  }
+  switch (N->getOpcode()) {
+  case ISD::CopyFromReg: {
+    Register Reg = cast<RegisterSDNode>(N->getOperand(1))->getReg();
+    if (Reg.isPhysical())
+      return true;
+    const MachineRegisterInfo &MRI = FLI->MF->getRegInfo();
+    if (MCRegister Phys = MRI.getLiveInPhysReg(Reg)) {
+      // An argument in a0-a7, when every argument before it takes one GPR.
+      const Function &F = *FLI->Fn;
+      if (Phys < RISCV::X10 || Phys > RISCV::X17)
+        return true;
+      unsigned Idx = Phys - RISCV::X10;
+      if (Idx >= F.arg_size())
+        return true;
+      unsigned XLen = Subtarget.getXLen();
+      for (unsigned I = 0; I <= Idx; ++I) {
+        const Argument *A = F.getArg(I);
+        Type *Ty = A->getType();
+        if (A->hasByValAttr() || A->hasStructRetAttr() ||
+            !(Ty->isPointerTy() ||
+              (Ty->isIntegerTy() && Ty->getIntegerBitWidth() <= XLen)))
+          return true;
+      }
+      return UA->isDivergent(F.getArg(Idx));
+    }
+    if (const Value *V = FLI->getValueFromVirtualReg(Reg)) {
+      if (UA->isDivergent(V))
+        return true;
+      // a use outside a cycle with a divergent exit (temporal divergence)
+      for (const Use &U : V->uses()) {
+        if (UA->isDivergentUse(U))
+          return true;
+      }
+      return false;
+    }
+    return true;
+  }
+  case ISD::INTRINSIC_WO_CHAIN:
+    return N->getConstantOperandVal(0) != Intrinsic::riscv_vx_uniform;
+  case ISD::INTRINSIC_W_CHAIN:
+  case ISD::INTRINSIC_VOID:
+    return true;
+  case ISD::LOAD:
+  case ISD::STORE: {
+    // A thread's stack holds its own values, even at a uniform address, so an
+    // access that may reach it is made by every thread.
+    const Value *Ptr = cast<MemSDNode>(N)->getMemOperand()->getValue();
+    return !Ptr || vortex::vortexMayPointToPrivate(Ptr);
+  }
+  default:
+    return N->isMemIntrinsic() || isa<AtomicSDNode>(N);
+  }
+}
+
+// With XVortexU, a warp-uniform XLEN value that crosses blocks lives in a u
+// register, so a loop does not copy it between the register files.
+const TargetRegisterClass *
+RISCVTargetLowering::getRegClassForCrossBlockValue(MVT VT, bool isDivergent) const {
+  if (Subtarget.hasVendorXVortexU() && !isDivergent && VT == Subtarget.getXLenVT())
+    return &RISCV::UGPRRegClass;
+  return getRegClassFor(VT, isDivergent);
+}
+
+bool RISCVTargetLowering::isSDNodeAlwaysUniform(const SDNode *N) const {
+  if (!Subtarget.hasVendorXVortexU())
+    return false;
+  if (N->getOpcode() == RISCVISD::VX_UNIFORM)
+    return true;
+  return N->getOpcode() == ISD::INTRINSIC_WO_CHAIN &&
+         N->getConstantOperandVal(0) == Intrinsic::riscv_vx_uniform;
 }
 
 bool RISCVTargetLowering::isLegalAddImmediate(int64_t Imm) const {
@@ -10364,6 +10459,8 @@ SDValue RISCVTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   switch (IntNo) {
   default:
     break; // Don't custom lower most intrinsics.
+  case Intrinsic::riscv_vx_uniform:
+    return DAG.getNode(RISCVISD::VX_UNIFORM, DL, Op.getValueType(), Op.getOperand(1));
   case Intrinsic::riscv_tuple_insert: {
     SDValue Vec = Op.getOperand(1);
     SDValue SubVec = Op.getOperand(2);
@@ -21931,6 +22028,7 @@ const char *RISCVTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(TH_LDD)
   NODE_NAME_CASE(TH_SWD)
   NODE_NAME_CASE(TH_SDD)
+  NODE_NAME_CASE(VX_UNIFORM)
   NODE_NAME_CASE(VX_FLW)
   NODE_NAME_CASE(VX_FSW)
   NODE_NAME_CASE(VMV_V_V_VL)

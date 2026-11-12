@@ -210,6 +210,8 @@ public:
   static char ID;
   explicit RISCVDAGToDAGISelLegacy(RISCVTargetMachine &TargetMachine,
                                    CodeGenOptLevel OptLevel);
+  // XVortexU selects warp-uniform nodes, which needs the DAG's divergence bits.
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
 namespace RISCV {

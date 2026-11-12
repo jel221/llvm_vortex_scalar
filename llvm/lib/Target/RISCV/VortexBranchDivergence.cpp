@@ -855,6 +855,16 @@ static bool mayPointToPrivate(const Value *V, const dv_info_t *dv_info,
   return false;
 }
 
+bool vortexMayPointToPrivate(const Value *Ptr) {
+  const Function *F = nullptr;
+  if (auto I = dyn_cast<Instruction>(Ptr))
+    F = I->getFunction();
+  else if (auto A = dyn_cast<Argument>(Ptr))
+    F = A->getParent();
+  SmallPtrSet<const Value *, 16> Visited;
+  return mayPointToPrivate(Ptr, F ? DivergenceInfo::get(F) : nullptr, Visited);
+}
+
 // Records what F's call sites pass to local functions: whether each argument
 // is uniform (without UA, as for a function the analysis skips, every value is
 // taken as divergent) and whether it may point into the stack. A function whose
@@ -1454,16 +1464,22 @@ void VortexBranchDivergence1::initialize(Function &F) {
 }
 
 // Replace every riscv_vx_uniform marker in F with its source operand and erase
-// it. These markers are uniformity hints with no backend lowering — they are
-// inserted by UniformAnnotationPass and consumed by the divergence analysis, but
-// MUST be removed before instruction selection (otherwise ISel fails with
-// "cannot select intrinsic llvm.riscv.vx.uniform"). Safe to run after the
+// it. These markers are uniformity hints inserted by UniformAnnotationPass and
+// consumed by the divergence analysis. Instruction selection lowers only the
+// XLEN-typed ones, and only with XVortexU, which selects uniform values into
+// the u registers (KeepXLen); every other marker must be gone before it
+// ("cannot select intrinsic llvm.riscv.vx.uniform"). Safe to run after the
 // analysis, or on the size-guard bail-out path where no analysis ran.
-static void stripVxUniformMarkers(Function &F) {
+static void stripVxUniformMarkers(Function &F, bool KeepXLen = false,
+                                  unsigned XLen = 32) {
   for (auto iter = inst_begin(F), iterE = inst_end(F); iter != iterE;) {
     auto &I = *iter++;
     if (auto II = dyn_cast<IntrinsicInst>(&I)) {
       if (II->getIntrinsicID() == Intrinsic::riscv_vx_uniform) {
+        Type *T = II->getType();
+        if (KeepXLen && (T->isPointerTy() ||
+                         (T->isIntegerTy() && T->getIntegerBitWidth() == XLen)))
+          continue;
         II->replaceAllUsesWith(II->getOperand(0));
         II->eraseFromParent();
       }
@@ -1593,7 +1609,11 @@ bool VortexBranchDivergence1::runOnFunction(Function &F) {
   }
 
   // remove uniform intrinsics (now that the divergence analysis is done)
-  stripVxUniformMarkers(F);
+  {
+    auto &TM = getAnalysis<TargetPassConfig>().getTM<CodeGenTargetMachineImpl>();
+    auto &ST = TM.getSubtarget<RISCVSubtarget>(F);
+    stripVxUniformMarkers(F, ST.hasVendorXVortexU(), ST.getXLen());
+  }
 
   return changed;
 }

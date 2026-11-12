@@ -375,7 +375,8 @@ void FunctionLoweringInfo::clear() {
 
 /// CreateReg - Allocate a single virtual register for the given type.
 Register FunctionLoweringInfo::CreateReg(MVT VT, bool isDivergent) {
-  return RegInfo->createVirtualRegister(TLI->getRegClassFor(VT, isDivergent));
+  return RegInfo->createVirtualRegister(
+      TLI->getRegClassForCrossBlockValue(VT, isDivergent));
 }
 
 /// CreateRegs - Allocate the appropriate number of virtual registers of
@@ -402,9 +403,22 @@ Register FunctionLoweringInfo::CreateRegs(Type *Ty, bool isDivergent) {
   return FirstReg;
 }
 
+// A value uniform where it is defined can still reach a use divergently: used
+// outside a cycle whose exit is divergent, it is each thread's value from the
+// iteration that thread left in (temporal divergence). Its register is then a
+// divergent one.
+static bool hasDivergentUse(const Value *V, const UniformityInfo *UA) {
+  for (const Use &U : V->uses()) {
+    if (UA->isDivergentUse(U))
+      return true;
+  }
+  return false;
+}
+
 Register FunctionLoweringInfo::CreateRegs(const Value *V) {
-  return CreateRegs(V->getType(), UA && UA->isDivergent(V) &&
-                                      !TLI->requiresUniformRegister(*MF, V));
+  bool Divergent = UA && (UA->isDivergent(V) || hasDivergentUse(V, UA));
+  return CreateRegs(V->getType(),
+                    Divergent && !TLI->requiresUniformRegister(*MF, V));
 }
 
 Register FunctionLoweringInfo::InitializeRegForValue(const Value *V) {

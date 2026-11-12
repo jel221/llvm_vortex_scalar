@@ -1046,6 +1046,14 @@ public:
     return RC;
   }
 
+  /// The register class of a value live outside its defining block, which
+  /// SelectionDAG creates with the value's divergence; other callers ask
+  /// getRegClassFor.
+  virtual const TargetRegisterClass *
+  getRegClassForCrossBlockValue(MVT VT, bool isDivergent) const {
+    return getRegClassFor(VT, isDivergent);
+  }
+
   /// Allows target to decide about the register class of the
   /// specific value that is live outside the defining block.
   /// Returns true if the value needs uniform register class.

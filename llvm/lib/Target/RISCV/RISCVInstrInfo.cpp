@@ -460,6 +460,25 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
+  if (RISCV::UGPRRegClass.contains(DstReg) || RISCV::UGPRRegClass.contains(SrcReg)) {
+    bool DstU = RISCV::UGPRRegClass.contains(DstReg);
+    bool SrcU = RISCV::UGPRRegClass.contains(SrcReg);
+    unsigned State = getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc);
+    if (DstU && SrcU) {
+      BuildMI(MBB, MBBI, DL, get(RISCV::VXU_ADDI), DstReg).addReg(SrcReg, State).addImm(0);
+      return;
+    }
+    if (DstU && RISCV::GPRRegClass.contains(SrcReg)) {
+      // the first active lane: the value is warp-uniform
+      BuildMI(MBB, MBBI, DL, get(RISCV::VXU_MVX), DstReg).addReg(SrcReg, State);
+      return;
+    }
+    if (SrcU && RISCV::GPRRegClass.contains(DstReg)) {
+      BuildMI(MBB, MBBI, DL, get(RISCV::VXU_MVU), DstReg).addReg(SrcReg, State);
+      return;
+    }
+  }
+
   if (RISCV::GPRF16RegClass.contains(DstReg, SrcReg)) {
     BuildMI(MBB, MBBI, DL, get(RISCV::PseudoMV_FPR16INX), DstReg)
         .addReg(SrcReg,
@@ -731,6 +750,10 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     Opcode = TRI->getRegSizeInBits(RISCV::GPRRegClass) == 32 ?
              RISCV::SW : RISCV::SD;
     IsScalableVector = false;
+  } else if (RISCV::UGPRRegClass.hasSubClassEq(RC)) {
+    // every thread stores the uniform value to its own stack slot
+    Opcode = STI.is64Bit() ? RISCV::VXUO_SD : RISCV::VXUO_SW;
+    IsScalableVector = false;
   } else if (RISCV::GPRF16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::SH_INX;
     IsScalableVector = false;
@@ -843,6 +866,9 @@ void RISCVInstrInfo::loadRegFromStackSlot(
   if (RISCV::GPRRegClass.hasSubClassEq(RC)) {
     Opcode = TRI->getRegSizeInBits(RISCV::GPRRegClass) == 32 ?
              RISCV::LW : RISCV::LD;
+    IsScalableVector = false;
+  } else if (RISCV::UGPRRegClass.hasSubClassEq(RC)) {
+    Opcode = RISCV::PseudoVXU_RELOAD;
     IsScalableVector = false;
   } else if (RISCV::GPRF16RegClass.hasSubClassEq(RC)) {
     Opcode = RISCV::LH_INX;
@@ -1113,7 +1139,49 @@ static RISCVCC::CondCode getCondFromBranchOpc(unsigned Opc) {
     return RISCVCC::COND_LTU;
   case RISCV::BGEU:
     return RISCVCC::COND_GEU;
+  case RISCV::VXU_BEQ:  case RISCV::VXUO_BEQ:  return RISCVCC::COND_EQ;
+  case RISCV::VXU_BNE:  case RISCV::VXUO_BNE:  return RISCVCC::COND_NE;
+  case RISCV::VXU_BLT:  case RISCV::VXUO_BLT:  return RISCVCC::COND_LT;
+  case RISCV::VXU_BGE:  case RISCV::VXUO_BGE:  return RISCVCC::COND_GE;
+  case RISCV::VXU_BLTU: case RISCV::VXUO_BLTU: return RISCVCC::COND_LTU;
+  case RISCV::VXU_BGEU: case RISCV::VXUO_BGEU: return RISCVCC::COND_GEU;
   }
+}
+
+// XVortexU branches keep their register files in the condition: the mode sits
+// above the condition code in Cond[0] (0 standard, 1 uniform, 2 uniform second
+// operand), so passes that match standard condition codes skip them.
+enum : unsigned { BrModeShift = 8, BrModeStd = 0, BrModeU = 1, BrModeUO = 2 };
+
+static unsigned getBranchMode(unsigned Opc) {
+  switch (Opc) {
+  case RISCV::VXU_BEQ: case RISCV::VXU_BNE: case RISCV::VXU_BLT:
+  case RISCV::VXU_BGE: case RISCV::VXU_BLTU: case RISCV::VXU_BGEU:
+    return BrModeU;
+  case RISCV::VXUO_BEQ: case RISCV::VXUO_BNE: case RISCV::VXUO_BLT:
+  case RISCV::VXUO_BGE: case RISCV::VXUO_BLTU: case RISCV::VXUO_BGEU:
+    return BrModeUO;
+  default:
+    return BrModeStd;
+  }
+}
+
+static unsigned getUniformBrOpc(RISCVCC::CondCode CC, unsigned Mode) {
+  static const unsigned U[]  = {RISCV::VXU_BEQ, RISCV::VXU_BNE, RISCV::VXU_BLT,
+                                RISCV::VXU_BGE, RISCV::VXU_BLTU, RISCV::VXU_BGEU};
+  static const unsigned UO[] = {RISCV::VXUO_BEQ, RISCV::VXUO_BNE, RISCV::VXUO_BLT,
+                                RISCV::VXUO_BGE, RISCV::VXUO_BLTU, RISCV::VXUO_BGEU};
+  unsigned I;
+  switch (CC) {
+  case RISCVCC::COND_EQ:  I = 0; break;
+  case RISCVCC::COND_NE:  I = 1; break;
+  case RISCVCC::COND_LT:  I = 2; break;
+  case RISCVCC::COND_GE:  I = 3; break;
+  case RISCVCC::COND_LTU: I = 4; break;
+  case RISCVCC::COND_GEU: I = 5; break;
+  default: llvm_unreachable("Unknown condition code!");
+  }
+  return Mode == BrModeU ? U[I] : UO[I];
 }
 
 // The contents of values added to Cond are not examined outside of
@@ -1126,6 +1194,7 @@ static void parseCondBranch(MachineInstr &LastInst, MachineBasicBlock *&Target,
          "Unknown conditional branch");
   Target = LastInst.getOperand(2).getMBB();
   unsigned CC = getCondFromBranchOpc(LastInst.getOpcode());
+  CC |= getBranchMode(LastInst.getOpcode()) << BrModeShift;
   Cond.push_back(MachineOperand::CreateImm(CC));
   Cond.push_back(LastInst.getOperand(0));
   Cond.push_back(LastInst.getOperand(1));
@@ -1300,8 +1369,11 @@ unsigned RISCVInstrInfo::insertBranch(
   }
 
   // Either a one or two-way conditional branch.
-  auto CC = static_cast<RISCVCC::CondCode>(Cond[0].getImm());
-  MachineInstr &CondMI = *BuildMI(&MBB, DL, getBrCond(CC, Cond[2].isImm()))
+  auto CC = static_cast<RISCVCC::CondCode>(Cond[0].getImm() & ((1 << BrModeShift) - 1));
+  unsigned Mode = Cond[0].getImm() >> BrModeShift;
+  MachineInstr &CondMI = *BuildMI(&MBB, DL, Mode != BrModeStd
+                                                ? get(getUniformBrOpc(CC, Mode))
+                                                : getBrCond(CC, Cond[2].isImm()))
                               .add(Cond[1])
                               .add(Cond[2])
                               .addMBB(TBB);
@@ -1387,8 +1459,9 @@ void RISCVInstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,
 bool RISCVInstrInfo::reverseBranchCondition(
     SmallVectorImpl<MachineOperand> &Cond) const {
   assert((Cond.size() == 3) && "Invalid branch condition!");
-  auto CC = static_cast<RISCVCC::CondCode>(Cond[0].getImm());
-  Cond[0].setImm(getOppositeBranchCondition(CC));
+  auto CC = static_cast<RISCVCC::CondCode>(Cond[0].getImm() & ((1 << BrModeShift) - 1));
+  Cond[0].setImm(getOppositeBranchCondition(CC) |
+                 (Cond[0].getImm() & ~int64_t((1 << BrModeShift) - 1)));
   return false;
 }
 
@@ -1401,6 +1474,8 @@ bool RISCVInstrInfo::optimizeCondBranch(MachineInstr &MI) const {
   if (analyzeBranch(*MBB, TBB, FBB, Cond, /*AllowModify=*/false))
     return false;
 
+  if (Cond[0].getImm() >> BrModeShift)
+    return false;
   RISCVCC::CondCode CC = static_cast<RISCVCC::CondCode>(Cond[0].getImm());
   assert(CC != RISCVCC::COND_INVALID);
 
@@ -1530,6 +1605,18 @@ bool RISCVInstrInfo::isBranchOffsetInRange(unsigned BranchOp,
   case RISCV::BGEU:
   case RISCV::CV_BEQIMM:
   case RISCV::CV_BNEIMM:
+  case RISCV::VXU_BEQ:
+  case RISCV::VXU_BNE:
+  case RISCV::VXU_BLT:
+  case RISCV::VXU_BGE:
+  case RISCV::VXU_BLTU:
+  case RISCV::VXU_BGEU:
+  case RISCV::VXUO_BEQ:
+  case RISCV::VXUO_BNE:
+  case RISCV::VXUO_BLT:
+  case RISCV::VXUO_BGE:
+  case RISCV::VXUO_BLTU:
+  case RISCV::VXUO_BGEU:
     return isIntN(13, BrOffset);
   case RISCV::JAL:
   case RISCV::PseudoBR:

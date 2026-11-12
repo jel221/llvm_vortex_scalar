@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCVISelDAGToDAG.h"
+#include "llvm/Analysis/UniformityAnalysis.h"
+#include "llvm/InitializePasses.h"
 #include "MCTargetDesc/RISCVBaseInfo.h"
 #include "MCTargetDesc/RISCVMCTargetDesc.h"
 #include "MCTargetDesc/RISCVMatInt.h"
@@ -4189,4 +4191,11 @@ RISCVDAGToDAGISelLegacy::RISCVDAGToDAGISelLegacy(RISCVTargetMachine &TM,
     : SelectionDAGISelLegacy(
           ID, std::make_unique<RISCVDAGToDAGISel>(TM, OptLevel)) {}
 
-INITIALIZE_PASS(RISCVDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
+void RISCVDAGToDAGISelLegacy::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<UniformityInfoWrapperPass>();
+  SelectionDAGISelLegacy::getAnalysisUsage(AU);
+}
+
+INITIALIZE_PASS_BEGIN(RISCVDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
+INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
+INITIALIZE_PASS_END(RISCVDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)

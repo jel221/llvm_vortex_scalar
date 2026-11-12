@@ -196,6 +196,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVVortexKEntryPass(*PR);
   initializeRISCVVortexWideLoadSplitPass(*PR);
+  initializeRISCVVortexUniformOperandPass(*PR);
   initializeRISCVPostRAExpandPseudoPass(*PR);
   initializeRISCVMergeBaseOffsetOptPass(*PR);
   initializeRISCVOptWInstrsPass(*PR);
@@ -710,6 +711,7 @@ void RISCVPassConfig::addMachineSSAOptimization() {
   addPass(createRISCVVectorPeepholePass());
 
   TargetPassConfig::addMachineSSAOptimization();
+  addPass(createRISCVVortexUniformOperandPass());
 
   if (EnableMachineCombiner)
     addPass(&MachineCombinerID);

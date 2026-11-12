@@ -30,6 +30,8 @@ namespace RISCVISD {
 // clang-format off
 enum NodeType : unsigned {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
+  // XVortexU: a value every lane of the warp holds alike (riscv_vx_uniform).
+  VX_UNIFORM,
   RET_GLUE,
   SRET_GLUE,
   MRET_GLUE,
@@ -527,6 +529,12 @@ public:
                              Instruction *I = nullptr) const override;
   bool isLegalICmpImmediate(int64_t Imm) const override;
   bool isLegalAddImmediate(int64_t Imm) const override;
+
+  bool isSDNodeSourceOfDivergence(const SDNode *N, FunctionLoweringInfo *FLI,
+                                  UniformityInfo *UA) const override;
+  bool isSDNodeAlwaysUniform(const SDNode *N) const override;
+  const TargetRegisterClass *
+  getRegClassForCrossBlockValue(MVT VT, bool isDivergent) const override;
   bool isTruncateFree(Type *SrcTy, Type *DstTy) const override;
   bool isTruncateFree(EVT SrcVT, EVT DstVT) const override;
   bool isTruncateFree(SDValue Val, EVT VT2) const override;

@@ -171,6 +171,9 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
       markSuperRegs(Reserved, Reg);
   }
 
+  // u0 reads zero
+  markSuperRegs(Reserved, RISCV::U0);
+
   // Use markSuperRegs to ensure any register aliases are also reserved
   markSuperRegs(Reserved, RISCV::X2_H); // sp
   markSuperRegs(Reserved, RISCV::X3_H); // gp
@@ -646,6 +649,20 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   case RISCV::PseudoVRELOAD8_M1:
     lowerVRELOAD(II);
     return true;
+  case RISCV::PseudoVXU_RELOAD: {
+    // a per-thread load of the uniform value, moved to the u register
+    const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+    Register Tmp = MRI.createVirtualRegister(&RISCV::GPRRegClass);
+    bool Is64 = MF.getSubtarget<RISCVSubtarget>().is64Bit();
+    BuildMI(*MI.getParent(), II, DL, TII->get(Is64 ? RISCV::LD : RISCV::LW), Tmp)
+        .add(MI.getOperand(1))
+        .add(MI.getOperand(2));
+    BuildMI(*MI.getParent(), II, DL, TII->get(RISCV::VXU_MVX),
+            MI.getOperand(0).getReg())
+        .addReg(Tmp, RegState::Kill);
+    MI.eraseFromParent();
+    return true;
+  }
   }
 
   return false;

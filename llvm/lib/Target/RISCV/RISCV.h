@@ -95,6 +95,8 @@ ModulePass *createRISCVVortexKEntryPass();
 void initializeRISCVVortexKEntryPass(PassRegistry &);
 
 FunctionPass *createRISCVVortexWideLoadSplitPass();
+FunctionPass *createRISCVVortexUniformOperandPass();
+void initializeRISCVVortexUniformOperandPass(PassRegistry &);
 void initializeRISCVVortexWideLoadSplitPass(PassRegistry &);
 extern char &RISCVVortexWideLoadSplitID;
 

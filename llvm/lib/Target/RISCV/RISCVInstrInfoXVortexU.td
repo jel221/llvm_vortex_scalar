@@ -309,3 +309,117 @@ let Predicates = [HasVendorXVortexU, IsRV64] in
 def VXUO_SD : VXUO_store<0b011, "sd">;
 
 } // Predicates = [HasVendorXVortexU], DecoderNamespace = "XVortexU"
+
+//===----------------------------------------------------------------------===//
+// Code generation: warp-uniform values in the u registers
+//===----------------------------------------------------------------------===//
+
+// A u register reloads through a per-thread load and u.mvx (expanded with the
+// frame index); it spills with a uniform-operand store.
+let Predicates = [HasVendorXVortexU], hasSideEffects = 0, mayLoad = 1,
+    mayStore = 0 in
+def PseudoVXU_RELOAD : Pseudo<(outs UGPR:$rd), (ins GPR:$rs1, simm12:$imm12), []>;
+
+// A node every lane of the warp computes alike (SelectionDAG divergence,
+// RISCVTargetLowering::isSDNodeSourceOfDivergence).
+class VXUniform1<SDPatternOperator op>
+    : PatFrag<(ops node:$a), (op node:$a), [{ return !N->isDivergent(); }]>;
+class VXUniform2<SDPatternOperator op>
+    : PatFrag<(ops node:$a, node:$b), (op node:$a, node:$b),
+              [{ return !N->isDivergent(); }]>;
+
+def vxu_brcc : PatFrag<(ops node:$a, node:$b, node:$cc, node:$bb),
+                       (riscv_brcc node:$a, node:$b, node:$cc, node:$bb),
+                       [{ return !N->isDivergent(); }]>;
+
+let Predicates = [HasVendorXVortexU], AddedComplexity = 20 in {
+
+class PatUU<SDPatternOperator op, RVInst inst>
+    : Pat<(XLenVT (VXUniform2<op> (XLenVT UGPR:$a), (XLenVT UGPR:$b))),
+          (inst UGPR:$a, UGPR:$b)>;
+class PatUImm<SDPatternOperator op, RVInst inst, ImmLeaf imm>
+    : Pat<(XLenVT (VXUniform2<op> (XLenVT UGPR:$a), imm:$i)),
+          (inst UGPR:$a, imm:$i)>;
+
+def : PatUU<add, VXU_ADD>;
+def : PatUU<sub, VXU_SUB>;
+def : PatUU<and, VXU_AND>;
+def : PatUU<or,  VXU_OR>;
+def : PatUU<xor, VXU_XOR>;
+def : PatUU<shiftop<shl>, VXU_SLL>;
+def : PatUU<shiftop<srl>, VXU_SRL>;
+def : PatUU<shiftop<sra>, VXU_SRA>;
+def : PatUU<setlt,  VXU_SLT>;
+def : PatUU<setult, VXU_SLTU>;
+def : PatUImm<add, VXU_ADDI, simm12>;
+def : PatUImm<and, VXU_ANDI, simm12>;
+def : PatUImm<or,  VXU_ORI,  simm12>;
+def : PatUImm<xor, VXU_XORI, simm12>;
+def : PatUImm<setlt,  VXU_SLTI,  simm12>;
+def : PatUImm<setult, VXU_SLTIU, simm12>;
+def : PatUImm<shl, VXU_SLLI, uimmlog2xlen>;
+def : PatUImm<srl, VXU_SRLI, uimmlog2xlen>;
+def : PatUImm<sra, VXU_SRAI, uimmlog2xlen>;
+
+let Predicates = [HasVendorXVortexU, HasStdExtM] in {
+def : PatUU<mul,   VXU_MUL>;
+def : PatUU<mulhs, VXU_MULH>;
+def : PatUU<mulhu, VXU_MULHU>;
+def : PatUU<sdiv,  VXU_DIV>;
+def : PatUU<udiv,  VXU_DIVU>;
+def : PatUU<srem,  VXU_REM>;
+def : PatUU<urem,  VXU_REMU>;
+}
+
+// Loads and stores at a uniform address: once per warp. A stack address is
+// per-thread, so it is never uniform.
+class PatULd<PatFrag LoadOp, RVInst inst, ValueType vt = XLenVT>
+    : Pat<(vt (VXUniform1<LoadOp> (AddrRegImm (XLenVT UGPR:$rs1), simm12:$imm12))),
+          (inst UGPR:$rs1, simm12:$imm12)>;
+class PatUSt<PatFrag StoreOp, RVInst inst, ValueType vt = XLenVT>
+    : Pat<(VXUniform2<StoreOp> (vt UGPR:$rs2),
+                               (AddrRegImm (XLenVT UGPR:$rs1), simm12:$imm12)),
+          (inst UGPR:$rs2, UGPR:$rs1, simm12:$imm12)>;
+
+def : PatULd<sextloadi8,  VXU_LB>;
+def : PatULd<extloadi8,   VXU_LBU>;
+def : PatULd<zextloadi8,  VXU_LBU>;
+def : PatULd<sextloadi16, VXU_LH>;
+def : PatULd<extloadi16,  VXU_LH>;
+def : PatULd<zextloadi16, VXU_LHU>;
+def : PatUSt<truncstorei8,  VXU_SB>;
+def : PatUSt<truncstorei16, VXU_SH>;
+
+let Predicates = [HasVendorXVortexU, IsRV32] in {
+def : PatULd<load, VXU_LW, i32>;
+def : PatUSt<store, VXU_SW, i32>;
+}
+let Predicates = [HasVendorXVortexU, IsRV64] in {
+def : PatULd<load, VXU_LD, i64>;
+def : PatULd<sextloadi32, VXU_LW, i64>;
+def : PatULd<extloadi32,  VXU_LW, i64>;
+def : PatULd<zextloadi32, VXU_LWU, i64>;
+def : PatUSt<truncstorei32, VXU_SW, i64>;
+def : PatUSt<store, VXU_SD, i64>;
+}
+
+// Uniform branches: no copy of the operands to the per-thread file.
+multiclass PatUBcc<CondCode Cond, RVInstB Inst> {
+  def : Pat<(vxu_brcc (XLenVT UGPR:$rs1), UGPR:$rs2, Cond, bb:$imm12),
+            (Inst UGPR:$rs1, UGPR:$rs2, simm13_lsb0:$imm12)>;
+}
+defm : PatUBcc<SETEQ,  VXU_BEQ>;
+defm : PatUBcc<SETNE,  VXU_BNE>;
+defm : PatUBcc<SETLT,  VXU_BLT>;
+defm : PatUBcc<SETGE,  VXU_BGE>;
+defm : PatUBcc<SETULT, VXU_BLTU>;
+defm : PatUBcc<SETUGE, VXU_BGEU>;
+
+} // Predicates = [HasVendorXVortexU], AddedComplexity = 20
+
+// The uniformity marker: the value moves to a u register.
+def riscv_vx_uniform_node : SDNode<"RISCVISD::VX_UNIFORM",
+                                   SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>]>>;
+let Predicates = [HasVendorXVortexU] in
+def : Pat<(XLenVT (riscv_vx_uniform_node (XLenVT GPR:$x))),
+          (COPY_TO_REGCLASS GPR:$x, UGPR)>;

@@ -65,6 +65,7 @@ add_llvm_target(RISCVCodeGen
   RISCVVLOptimizer.cpp
   RISCVVortexKEntry.cpp
   RISCVVortexWideLoadSplit.cpp
+  RISCVVortexUniformOperand.cpp
   RISCVZacasABIFix.cpp
   VortexBranchDivergence.cpp
   VortexIntrinsicFunc.cpp
