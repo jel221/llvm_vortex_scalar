@@ -40,6 +40,12 @@ static cl::opt<bool>
                          cl::desc("Disable two address hints for register "
                                   "allocation"));
 
+// Vortex sizes a warp's register file by the highest register its kernel
+// names, so allocating the lowest free register first lets more warps fit.
+static cl::opt<bool> VortexCompactRegs(
+    "riscv-vortex-compact-regs", cl::Hidden, cl::init(false),
+    cl::desc("Prefer the lowest-numbered free register in allocation"));
+
 static_assert(RISCV::X1 == RISCV::X0 + 1, "Register list not consecutive");
 static_assert(RISCV::X31 == RISCV::X0 + 31, "Register list not consecutive");
 static_assert(RISCV::F1_H == RISCV::F0_H + 1, "Register list not consecutive");
@@ -1021,6 +1027,17 @@ bool RISCVRegisterInfo::getRegAllocationHints(
   for (MCPhysReg OrderReg : Order)
     if (TwoAddrHints.count(OrderReg))
       Hints.push_back(OrderReg);
+
+  if (VortexCompactRegs && !BaseImplRetVal) {
+    SmallVector<MCPhysReg, 32> Ascending(Order);
+    llvm::stable_sort(Ascending, [&](MCPhysReg A, MCPhysReg B) {
+      return getEncodingValue(A) < getEncodingValue(B);
+    });
+    // ra stays last: taking it costs a save and a restore.
+    for (MCPhysReg Reg : Ascending)
+      if (Reg != RISCV::X1 && !is_contained(Hints, Reg))
+        Hints.push_back(Reg);
+  }
 
   return BaseImplRetVal;
 }
