@@ -511,13 +511,13 @@ def GPRF32 : RISCVRegisterClass<[f32], 32, (add (sequence "X%u_W", 10, 17),
                                                 (sequence "X%u_W", 0, 4),
                                                 (sequence "X%u_W", 32, 255))> {
   let AltOrders = [GPRF32VortexOrder];
-  let AltOrderSelect = [{ return RISCV::useVortexWindowHeuristics() ? 1 : 0; }];
+  let AltOrderSelect = [{ return RISCV::useVortexWindowHints() ? 1 : 0; }];
 }
 def GPRF32C : RISCVRegisterClass<[f32], 32, (add (sequence "X%u_W", 10, 15),
                                                  (sequence "X%u_W", 8, 9))>;
 def GPRF32NoX0 : RISCVRegisterClass<[f32], 32, (sub GPRF32, X0_W)> {
   let AltOrders = [(sub GPRF32VortexOrder, X0_W)];
-  let AltOrderSelect = [{ return RISCV::useVortexWindowHeuristics() ? 1 : 0; }];
+  let AltOrderSelect = [{ return RISCV::useVortexWindowHints() ? 1 : 0; }];
 }
 def GPRF32LoNoX0 : RISCVRegisterClass<[f32], 32, (sub GPRF32NoX0, (sequence "X%u_W", 32, 255))>;
 

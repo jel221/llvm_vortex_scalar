@@ -461,6 +461,10 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
       for (auto &MI : make_early_inc_range(MBB)) {
         if (MI.isMetaInstruction() || MI.getOpcode() == RISCV::VX_RPFX)
           continue;
+        // nothing may split a block's terminators (a later jump has no
+        // register operand to window)
+        if (MI.isTerminator() && MI.getIterator() != MBB.getFirstTerminator())
+          continue;
         Req R = requirement(MI);
         bool Needed = false;
         for (auto W : R.W)

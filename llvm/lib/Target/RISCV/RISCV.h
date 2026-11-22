@@ -107,6 +107,8 @@ unsigned getVortexMaxRegs();
 unsigned getVortexRwinMode();
 // Allocation and scheduling heuristics that serve sticky windows.
 bool useVortexWindowHeuristics();
+bool useVortexWindowSched();
+bool useVortexWindowHints();
 } // namespace RISCV
 
 FunctionPass *createRISCVVortexWideLoadSplitPass();

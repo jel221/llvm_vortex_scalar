@@ -170,8 +170,23 @@ static cl::opt<unsigned> VortexRwinMode(
 
 unsigned RISCV::getVortexRwinMode() { return VortexRwinMode; }
 
+static cl::opt<bool> VortexWindowSched(
+    "riscv-vortex-window-sched", cl::Hidden, cl::init(true),
+    cl::desc("Window-friendly pre-RA scheduling for register windows"));
+// Off by default: on softmax, epilogue and FFT kernels plain low-first
+// allocation needed as few or fewer window switches and cycles.
+static cl::opt<bool> VortexWindowHints(
+    "riscv-vortex-window-hints", cl::Hidden, cl::init(false),
+    cl::desc("Block-choosing allocation order and hints for register windows"));
+
 bool RISCV::useVortexWindowHeuristics() {
   return getVortexMaxRegs() > 32 && getVortexRwinMode() == 0;
+}
+bool RISCV::useVortexWindowSched() {
+  return useVortexWindowHeuristics() && VortexWindowSched;
+}
+bool RISCV::useVortexWindowHints() {
+  return useVortexWindowHeuristics() && VortexWindowHints;
 }
 
 unsigned RISCV::getVortexMaxRegs() {
@@ -1081,7 +1096,7 @@ bool RISCVRegisterInfo::getRegAllocationHints(
   // up as a group only when they need more than one block of their own; a
   // smaller overflow takes the next free registers in order. A value is judged by
   // the block where it is used most, single-block loops weighted 8x.
-  if (RISCV::useVortexWindowHeuristics()) {
+  if (RISCV::useVortexWindowHints()) {
     const TargetRegisterClass *RC = MRI->getRegClass(VirtReg);
     bool IsFP = RISCV::GPRF32RegClass.hasSubClassEq(RC);
     if (IsFP || RISCV::GPRRegClass.hasSubClassEq(RC)) {
@@ -1114,7 +1129,7 @@ bool RISCVRegisterInfo::getRegAllocationHints(
   // Register windows: updating a value in place keeps an instruction's result
   // in its source's 32-register block, so a phase over an array stays in one
   // window per field. A hint whose register is still live is skipped.
-  if (RISCV::useVortexWindowHeuristics()) {
+  if (RISCV::useVortexWindowHints()) {
     for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
       const MachineInstr &MI = *MO.getParent();
       if (MI.isCopy())
