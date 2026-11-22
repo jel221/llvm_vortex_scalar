@@ -1007,6 +1007,43 @@ bool RISCVRegisterInfo::getRegAllocationHints(
     return PhysReg && RISCV::GPRCRegClass.contains(PhysReg);
   };
 
+  // Register windows: which 32-register block a value should live in. In a
+  // block holding more values than x1..x31 (an unrolled phase), the values
+  // with few uses (12 or fewer) are array elements and go to x32 up, so a phase over them
+  // keeps each field in one window; values with many uses there are broadcast
+  // scalars (a max, a scale, an address) and stay in x1..x31 with the rest of
+  // the code's addresses and counters. Uses count 8x inside single-block loops.
+  if (RISCV::getVortexMaxRegs() > 32) {
+    const TargetRegisterClass *RC = MRI->getRegClass(VirtReg);
+    if (RISCV::GPRF32RegClass.hasSubClassEq(RC) ||
+        RISCV::GPRRegClass.hasSubClassEq(RC)) {
+      auto isHeavy = [&](const MachineBasicBlock *MBB) {
+        unsigned Defs = 0;
+        for (const MachineInstr &MI : *MBB)
+          for (const MachineOperand &Def : MI.defs())
+            if (Def.isReg() && Def.getReg().isVirtual())
+              ++Defs;
+        return Defs >= 32;
+      };
+      SmallDenseMap<const MachineBasicBlock *, bool, 8> Heavy;
+      int Score = 0;
+      unsigned Uses = 0;
+      for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
+        const MachineBasicBlock *MBB = MO.getParent()->getParent();
+        auto [It, New] = Heavy.try_emplace(MBB, false);
+        if (New)
+          It->second = isHeavy(MBB);
+        int W = MBB->isSuccessor(MBB) ? 8 : 1;
+        Score += It->second ? W : -W;
+        Uses += MO.isUse();
+      }
+      bool High = Score > 0 && Uses <= 12;
+      for (MCPhysReg Reg : Order)
+        if ((getEncodingValue(Reg) >= 32) == High && !is_contained(Hints, Reg))
+          Hints.push_back(Reg);
+    }
+  }
+
   // Register windows: updating a value in place keeps an instruction's result
   // in its source's 32-register block, so a phase over an array stays in one
   // window per field. A hint whose register is still live is skipped.

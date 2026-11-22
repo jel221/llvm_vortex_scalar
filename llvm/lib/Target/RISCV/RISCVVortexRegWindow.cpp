@@ -31,6 +31,8 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/ScheduleDAGInstrs.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCFixup.h"
@@ -46,6 +48,11 @@ using namespace llvm;
 
 STATISTIC(NumRwin, "Number of vx_rwin instructions inserted");
 
+static cl::opt<bool> EnableReorder(
+    "riscv-vortex-rwin-reorder", cl::Hidden, cl::init(true),
+    cl::desc("Reorder independent instructions so consecutive ones share "
+             "register windows"));
+
 namespace {
 
 constexpr unsigned NumFields = 4; // rd, rs1, rs2, rs3
@@ -60,6 +67,14 @@ struct Req {
         return false;
     return true;
   }
+};
+
+// Dependence graph of a region, built post-RA; the pass orders it itself.
+class WindowDAG : public ScheduleDAGInstrs {
+public:
+  WindowDAG(MachineFunction &MF)
+      : ScheduleDAGInstrs(MF, nullptr, /*RemoveKillFlags=*/true) {}
+  void schedule() override {}
 };
 
 class RISCVVortexRegWindow : public MachineFunctionPass {
@@ -109,6 +124,8 @@ private:
   Req requirement(MachineInstr &MI);
   Plan planBlock(const SmallVectorImpl<std::pair<MachineInstr *, Req>> &Reqs,
                  unsigned Entry, unsigned Target) const;
+  bool isRegionBoundary(const MachineInstr &MI) const;
+  void reorderBlock(MachineBasicBlock &MBB, WindowDAG &DAG);
 };
 
 } // end anonymous namespace
@@ -326,6 +343,94 @@ RISCVVortexRegWindow::Plan RISCVVortexRegWindow::planBlock(
   return P;
 }
 
+bool RISCVVortexRegWindow::isRegionBoundary(const MachineInstr &MI) const {
+  const MachineBasicBlock *MBB = MI.getParent();
+  if (MI.isDebugInstr() || MI.isCall() || MI.isInlineAsm() ||
+      TII->isSchedulingBoundary(MI, MBB, *MBB->getParent()))
+    return true;
+  Req R = const_cast<RISCVVortexRegWindow *>(this)->requirement(
+      const_cast<MachineInstr &>(MI));
+  bool AllZero = true;
+  for (auto W : R.W)
+    AllZero &= (W == 0);
+  return AllZero;
+}
+
+// Post-RA list scheduling of each region (no reordering across calls,
+// divergence or other window-zero points): among the instructions whose
+// dependences are met, take the earliest one the current windows already
+// satisfy, else the earliest one. A phase whose operands span several blocks
+// then switches once per block instead of once per element.
+void RISCVVortexRegWindow::reorderBlock(MachineBasicBlock &MBB,
+                                        WindowDAG &DAG) {
+  for (auto I = MBB.begin(), E = MBB.end(); I != E;) {
+    if (isRegionBoundary(*I)) {
+      ++I;
+      continue;
+    }
+    auto Begin = I;
+    unsigned N = 0;
+    while (I != E && !isRegionBoundary(*I)) {
+      ++I;
+      ++N;
+    }
+    auto End = I;
+    if (N < 3)
+      continue;
+
+    DAG.startBlock(&MBB);
+    DAG.enterRegion(&MBB, Begin, End, N);
+    DAG.buildSchedGraph(nullptr);
+    const unsigned NU = DAG.SUnits.size();
+    std::vector<Req> R(NU);
+    std::vector<unsigned> Preds(NU, 0);
+    for (SUnit &SU : DAG.SUnits) {
+      R[SU.NodeNum] = requirement(*SU.getInstr());
+      for (const SDep &D : SU.Preds)
+        if (D.getSUnit()->NodeNum < NU)
+          ++Preds[SU.NodeNum];
+    }
+    SmallVector<unsigned, 32> Ready;
+    for (unsigned U = 0; U < NU; ++U)
+      if (!Preds[U])
+        Ready.push_back(U);
+    int8_t Cur[NumFields] = {AnyWin, AnyWin, AnyWin, AnyWin};
+    SmallVector<MachineInstr *, 64> Order;
+    while (!Ready.empty()) {
+      unsigned BestIdx = 0;
+      bool BestFits = false;
+      for (unsigned K = 0; K < Ready.size(); ++K) {
+        const Req &Q = R[Ready[K]];
+        bool Fits = true;
+        for (unsigned F = 0; F < NumFields; ++F)
+          Fits &= Q.W[F] == AnyWin || Cur[F] == AnyWin || Q.W[F] == Cur[F];
+        if ((Fits && !BestFits) ||
+            (Fits == BestFits && Ready[K] < Ready[BestIdx])) {
+          BestIdx = K;
+          BestFits = Fits;
+        }
+      }
+      unsigned U = Ready[BestIdx];
+      Ready.erase(Ready.begin() + BestIdx);
+      for (unsigned F = 0; F < NumFields; ++F)
+        if (R[U].W[F] != AnyWin)
+          Cur[F] = R[U].W[F];
+      SUnit &SU = DAG.SUnits[U];
+      Order.push_back(SU.getInstr());
+      for (const SDep &D : SU.Succs) {
+        unsigned S = D.getSUnit()->NodeNum;
+        if (S < NU && --Preds[S] == 0)
+          Ready.push_back(S);
+      }
+    }
+    DAG.exitRegion();
+    DAG.finishBlock();
+    assert(Order.size() == N && "region not fully scheduled");
+    for (MachineInstr *MI : Order)
+      MBB.splice(End, &MBB, MI->getIterator());
+  }
+}
+
 bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   unsigned MaxRegs = RISCV::getVortexMaxRegs();
   if (MaxRegs <= 32 || skipFunction(MF.getFunction()))
@@ -340,6 +445,12 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   FieldCache.clear();
   NB = MaxRegs / 32;
   NS = NB * NB * NB * NB;
+
+  if (EnableReorder) {
+    WindowDAG DAG(MF);
+    for (auto &MBB : MF)
+      reorderBlock(MBB, DAG);
+  }
 
   // Requirements of every block, in order.
   DenseMap<const MachineBasicBlock *,
