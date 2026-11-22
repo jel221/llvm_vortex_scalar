@@ -909,6 +909,59 @@ RISCVRegisterInfo::getRegisterCostTableIndex(const MachineFunction &MF) const {
 
 // Add two address hints to improve chances of being able to use a compressed
 // instruction.
+// Most integer and FP virtual registers live at once in MBB. A value is live
+// from its first to its last appearance in the block, extended to the block
+// edges when it also appears in other blocks.
+std::pair<unsigned, unsigned>
+RISCVRegisterInfo::blockPressure(const MachineBasicBlock &MBB,
+                                 const MachineRegisterInfo &MRI) const {
+  struct Range {
+    unsigned First, Last;
+    bool FP;
+  };
+  DenseMap<Register, Range> Ranges;
+  unsigned Idx = 0;
+  for (const MachineInstr &MI : MBB) {
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.getReg().isVirtual())
+        continue;
+      Register R = MO.getReg();
+      auto [It, New] = Ranges.try_emplace(R, Range{Idx, Idx, false});
+      if (New) {
+        It->second.FP =
+            RISCV::GPRF32RegClass.hasSubClassEq(MRI.getRegClass(R));
+        if (MO.isUse())
+          It->second.First = 0;
+      }
+      It->second.Last = Idx;
+    }
+    ++Idx;
+  }
+  for (auto &[R, Rg] : Ranges) {
+    for (const MachineInstr &MI : MRI.reg_nodbg_instructions(R)) {
+      if (MI.getParent() != &MBB) {
+        Rg.Last = Idx;
+        break;
+      }
+    }
+  }
+  std::vector<int> IntDelta(Idx + 2, 0), FPDelta(Idx + 2, 0);
+  for (auto &[R, Rg] : Ranges) {
+    auto &D = Rg.FP ? FPDelta : IntDelta;
+    ++D[Rg.First];
+    --D[Rg.Last + 1];
+  }
+  unsigned IntMax = 0, FPMax = 0;
+  int IntCur = 0, FPCur = 0;
+  for (unsigned I = 0; I <= Idx; ++I) {
+    IntCur += IntDelta[I];
+    FPCur += FPDelta[I];
+    IntMax = std::max<unsigned>(IntMax, IntCur);
+    FPMax = std::max<unsigned>(FPMax, FPCur);
+  }
+  return {IntMax, FPMax};
+}
+
 bool RISCVRegisterInfo::getRegAllocationHints(
     Register VirtReg, ArrayRef<MCPhysReg> Order,
     SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
@@ -1007,40 +1060,41 @@ bool RISCVRegisterInfo::getRegAllocationHints(
     return PhysReg && RISCV::GPRCRegClass.contains(PhysReg);
   };
 
-  // Register windows: which 32-register block a value should live in. In a
-  // block holding more values than x1..x31 (an unrolled phase), the values
-  // with few uses (12 or fewer) are array elements and go to x32 up, so a phase over them
-  // keeps each field in one window; values with many uses there are broadcast
-  // scalars (a max, a scale, an address) and stay in x1..x31 with the rest of
-  // the code's addresses and counters. Uses count 8x inside single-block loops.
+  // Register windows: which 32-register block a value should live in. Code
+  // whose live values fit in x1..x31 stays there. Where they do not (an
+  // unrolled phase), FP values with few uses (array elements) go to x32 up so
+  // a phase over them keeps each field in one window, while values with many
+  // uses (a max, a scale, an address) stay in x1..x31. Integer elements move
+  // up as a group only when they need more than one block of their own; a
+  // smaller overflow takes the next free registers in order. A value is judged by
+  // the block where it is used most, single-block loops weighted 8x.
   if (RISCV::getVortexMaxRegs() > 32) {
     const TargetRegisterClass *RC = MRI->getRegClass(VirtReg);
-    if (RISCV::GPRF32RegClass.hasSubClassEq(RC) ||
-        RISCV::GPRRegClass.hasSubClassEq(RC)) {
-      auto isHeavy = [&](const MachineBasicBlock *MBB) {
-        unsigned Defs = 0;
-        for (const MachineInstr &MI : *MBB)
-          for (const MachineOperand &Def : MI.defs())
-            if (Def.isReg() && Def.getReg().isVirtual())
-              ++Defs;
-        return Defs >= 32;
-      };
-      SmallDenseMap<const MachineBasicBlock *, bool, 8> Heavy;
-      int Score = 0;
+    bool IsFP = RISCV::GPRF32RegClass.hasSubClassEq(RC);
+    if (IsFP || RISCV::GPRRegClass.hasSubClassEq(RC)) {
+      DenseMap<const MachineBasicBlock *, unsigned> Weight;
       unsigned Uses = 0;
       for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
         const MachineBasicBlock *MBB = MO.getParent()->getParent();
-        auto [It, New] = Heavy.try_emplace(MBB, false);
-        if (New)
-          It->second = isHeavy(MBB);
-        int W = MBB->isSuccessor(MBB) ? 8 : 1;
-        Score += It->second ? W : -W;
+        Weight[MBB] += MBB->isSuccessor(MBB) ? 8 : 1;
         Uses += MO.isUse();
       }
-      bool High = Score > 0 && Uses <= 12;
-      for (MCPhysReg Reg : Order)
-        if ((getEncodingValue(Reg) >= 32) == High && !is_contained(Hints, Reg))
-          Hints.push_back(Reg);
+      const MachineBasicBlock *Home = nullptr;
+      for (auto &[MBB, W] : Weight)
+        if (!Home || W > Weight[Home] ||
+            (W == Weight[Home] && MBB->getNumber() < Home->getNumber()))
+          Home = MBB;
+      if (Home) {
+        auto [IntP, FPP] = blockPressure(*Home, *MRI);
+        bool FewUses = Uses <= 12;
+        bool High = false;
+        if (IntP + FPP > 26)
+          High = IsFP ? FewUses : (FewUses && IntP > 40);
+        for (MCPhysReg Reg : Order)
+          if ((getEncodingValue(Reg) >= 32) == High &&
+              !is_contained(Hints, Reg))
+            Hints.push_back(Reg);
+      }
     }
   }
 

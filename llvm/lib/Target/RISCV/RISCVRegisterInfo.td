@@ -274,6 +274,7 @@ def GPR : GPRRegisterClass<(add (sequence "X%u", 10, 17),
                                 (sequence "X%u", 32, 255))>;
 
 // x0..x31 only: operands that must be reachable in window 0 (inline asm).
+let DecoderMethod = "DecodeGPRRegisterClass" in {
 def GPRLo : GPRRegisterClass<(add (sequence "X%u", 10, 17),
                                   (sequence "X%u", 5, 7),
                                   (sequence "X%u", 28, 31),
@@ -281,6 +282,7 @@ def GPRLo : GPRRegisterClass<(add (sequence "X%u", 10, 17),
                                   (sequence "X%u", 18, 27),
                                   (sequence "X%u", 0, 4))>;
 def GPRLoNoX0 : GPRRegisterClass<(sub GPRLo, X0)>;
+}
 
 def GPRX0 : GPRRegisterClass<(add X0)>;
 def GPRX1 : GPRRegisterClass<(add X1)>;

@@ -16,19 +16,37 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCV.h"
+#include "RISCVRegisterInfo.h"
+#include "MCTargetDesc/RISCVMCTargetDesc.h"
 #include "llvm/CodeGen/MachineScheduler.h"
+#include "llvm/CodeGen/RegisterClassInfo.h"
 
 using namespace llvm;
 
 namespace {
 
 class VortexWindowSchedStrategy : public GenericScheduler {
+  const RegisterClassInfo *RCI;
   unsigned LastOpc = 0;
   bool HaveLast = false;
 
+  // Level order widens the live set (every chain's next value at once); it
+  // only applies while the integer register file is under three quarters full.
+  bool haveRoom() const {
+    if (!DAG->isTrackingPressure())
+      return true;
+    const std::vector<unsigned> &Cur =
+        DAG->getTopRPTracker().getRegSetPressureAtPos();
+    for (const int *PS = TRI->getRegClassPressureSets(&RISCV::GPRRegClass);
+         *PS != -1; ++PS)
+      if (4 * Cur[*PS] > 3 * RCI->getRegPressureSetLimit(*PS))
+        return false;
+    return true;
+  }
+
 public:
   VortexWindowSchedStrategy(const MachineSchedContext *C)
-      : GenericScheduler(C) {}
+      : GenericScheduler(C), RCI(C->RegClassInfo) {}
 
   void initialize(ScheduleDAGMI *Dag) override {
     GenericScheduler::initialize(Dag);
@@ -55,6 +73,8 @@ protected:
   bool tryCandidate(SchedCandidate &Cand, SchedCandidate &TryCand,
                     SchedBoundary *Zone) const override {
     if (Cand.isValid() && HaveLast) {
+      if (!haveRoom())
+        return GenericScheduler::tryCandidate(Cand, TryCand, Zone);
       if (DAG->isTrackingPressure() &&
           tryPressure(TryCand.RPDelta.Excess, Cand.RPDelta.Excess, TryCand,
                       Cand, RegExcess, TRI, DAG->MF))

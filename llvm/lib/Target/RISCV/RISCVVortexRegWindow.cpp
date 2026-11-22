@@ -227,6 +227,12 @@ Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
   case RISCV::VX_PRED:
   case RISCV::VX_PRED_N:
   case RISCV::VX_TMC:
+    for (const MachineOperand &MO : MI.explicit_operands())
+      if (MO.isReg() && MO.getReg() &&
+          TRI->getEncodingValue(MO.getReg()) >= 32)
+        report_fatal_error("vortex register windows: " +
+                           TII->getName(MI.getOpcode()) +
+                           " names a register above x31");
     return Zero;
   default:
     break;

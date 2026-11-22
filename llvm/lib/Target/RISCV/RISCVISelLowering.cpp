@@ -23736,6 +23736,18 @@ static bool isWarpParkingPoint(const MachineInstr &MI) {
 // naming the register itself (a gather, a consumer of the packed lanes) keeps
 // its own operands.
 void RISCVTargetLowering::finalizeLowering(MachineFunction &MF) const {
+  // Register windows are zero at thread-mask and divergence instructions, so
+  // their operands must come from x0..x31.
+  if (RISCV::getVortexMaxRegs() > 32) {
+    MachineRegisterInfo &MRI = MF.getRegInfo();
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (isWarpParkingPoint(MI) && !MI.isInlineAsm())
+          for (MachineOperand &MO : MI.explicit_operands())
+            if (MO.isReg() && MO.getReg().isVirtual())
+              MRI.constrainRegClass(MO.getReg(), &RISCV::GPRLoRegClass);
+  }
+
   ArrayRef<MCPhysReg> GatherRegs =
       MF.getInfo<RISCVMachineFunctionInfo>()->getWarpGatherRegs();
   const TargetRegisterInfo &TRI = *Subtarget.getRegisterInfo();
