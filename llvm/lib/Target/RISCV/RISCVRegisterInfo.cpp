@@ -182,8 +182,10 @@ static cl::opt<bool> VortexWindowHints(
 bool RISCV::useVortexWindowHeuristics() {
   return getVortexMaxRegs() > 32 && getVortexRwinMode() == 0;
 }
+// The level-order scheduler also cuts spills in register-rich code, so it
+// serves every encoding, not only sticky windows.
 bool RISCV::useVortexWindowSched() {
-  return useVortexWindowHeuristics() && VortexWindowSched;
+  return getVortexMaxRegs() > 32 && VortexWindowSched;
 }
 bool RISCV::useVortexWindowHints() {
   return useVortexWindowHeuristics() && VortexWindowHints;
