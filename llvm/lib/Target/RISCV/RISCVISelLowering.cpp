@@ -22171,10 +22171,10 @@ RISCVTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       if (VT == MVT::f16 && Subtarget.hasStdExtZhinxmin())
         return std::make_pair(0U, &RISCV::GPRF16NoX0RegClass);
       if (VT == MVT::f32 && Subtarget.hasStdExtZfinx())
-        return std::make_pair(0U, &RISCV::GPRF32NoX0RegClass);
+        return std::make_pair(0U, &RISCV::GPRF32LoNoX0RegClass);
       if (VT == MVT::f64 && Subtarget.hasStdExtZdinx() && !Subtarget.is64Bit())
         return std::make_pair(0U, &RISCV::GPRPairNoX0RegClass);
-      return std::make_pair(0U, &RISCV::GPRNoX0RegClass);
+      return std::make_pair(0U, &RISCV::GPRLoNoX0RegClass);
     case 'f':
       if (VT == MVT::f16) {
         if (Subtarget.hasStdExtZfhmin())
@@ -22185,14 +22185,14 @@ RISCVTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
         if (Subtarget.hasStdExtF())
           return std::make_pair(0U, &RISCV::FPR32RegClass);
         if (Subtarget.hasStdExtZfinx())
-          return std::make_pair(0U, &RISCV::GPRF32NoX0RegClass);
+          return std::make_pair(0U, &RISCV::GPRF32LoNoX0RegClass);
       } else if (VT == MVT::f64) {
         if (Subtarget.hasStdExtD())
           return std::make_pair(0U, &RISCV::FPR64RegClass);
         if (Subtarget.hasStdExtZdinx() && !Subtarget.is64Bit())
           return std::make_pair(0U, &RISCV::GPRPairNoX0RegClass);
         if (Subtarget.hasStdExtZdinx() && Subtarget.is64Bit())
-          return std::make_pair(0U, &RISCV::GPRNoX0RegClass);
+          return std::make_pair(0U, &RISCV::GPRLoNoX0RegClass);
       }
       break;
     case 'R':

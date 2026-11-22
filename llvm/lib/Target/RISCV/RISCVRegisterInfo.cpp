@@ -156,6 +156,18 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   }
 }
 
+static cl::opt<unsigned> VortexMaxRegs(
+    "riscv-vortex-max-regs", cl::Hidden, cl::init(32),
+    cl::desc("Registers per thread reachable through Vortex register "
+             "windows (32, 64, 128 or 256)"));
+
+unsigned RISCV::getVortexMaxRegs() {
+  unsigned N = VortexMaxRegs;
+  if (N != 32 && N != 64 && N != 128 && N != 256)
+    report_fatal_error("-riscv-vortex-max-regs must be 32, 64, 128 or 256");
+  return N;
+}
+
 BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const RISCVFrameLowering *TFI = getFrameLowering(MF);
   BitVector Reserved(getNumRegs());
@@ -185,6 +197,15 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Additionally reserve dummy register used to form the register pair
   // beginning with 'x0' for instructions that take register pairs.
   markSuperRegs(Reserved, RISCV::DUMMY_REG_PAIR_WITH_X0);
+
+  // x32 and up only exist with Vortex register windows, and field 0 is x0 in
+  // every window, so x32, x64, ... are never reachable.
+  unsigned MaxRegs = RISCV::getVortexMaxRegs();
+  for (MCPhysReg Reg : RISCV::GPRF16RegClass) {
+    unsigned Enc = getEncodingValue(Reg);
+    if (Enc >= MaxRegs || (Enc >= 32 && Enc % 32 == 0))
+      markSuperRegs(Reserved, Reg);
+  }
 
   // There are only 16 GPRs for RVE.
   if (Subtarget.hasStdExtE())
@@ -985,6 +1006,26 @@ bool RISCVRegisterInfo::getRegAllocationHints(
     Register PhysReg = Reg.isPhysical() ? Reg : Register(VRM->getPhys(Reg));
     return PhysReg && RISCV::GPRCRegClass.contains(PhysReg);
   };
+
+  // Register windows: updating a value in place keeps an instruction's result
+  // in its source's 32-register block, so a phase over an array stays in one
+  // window per field. A hint whose register is still live is skipped.
+  if (RISCV::getVortexMaxRegs() > 32) {
+    for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
+      const MachineInstr &MI = *MO.getParent();
+      if (MI.isCopy())
+        continue;
+      if (MO.isDef()) {
+        for (const MachineOperand &Src : MI.explicit_uses())
+          if (Src.isReg() && Src.getReg())
+            tryAddHint(MO, Src, false);
+      } else {
+        for (const MachineOperand &Def : MI.defs())
+          if (Def.isReg() && Def.getReg() && !Def.isImplicit())
+            tryAddHint(MO, Def, false);
+      }
+    }
+  }
 
   for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
     const MachineInstr &MI = *MO.getParent();

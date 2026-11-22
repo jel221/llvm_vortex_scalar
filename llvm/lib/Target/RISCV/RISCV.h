@@ -94,6 +94,17 @@ void initializeRISCVZacasABIFixPass(PassRegistry &);
 ModulePass *createRISCVVortexKEntryPass();
 void initializeRISCVVortexKEntryPass(PassRegistry &);
 
+FunctionPass *createRISCVVortexRegWindowPass();
+class MachineSchedContext;
+class ScheduleDAGMILive;
+ScheduleDAGMILive *createVortexWindowSchedLive(MachineSchedContext *C);
+void initializeRISCVVortexRegWindowPass(PassRegistry &);
+
+namespace RISCV {
+// Registers per thread the Vortex register windows expose (32 = none).
+unsigned getVortexMaxRegs();
+} // namespace RISCV
+
 FunctionPass *createRISCVVortexWideLoadSplitPass();
 void initializeRISCVVortexWideLoadSplitPass(PassRegistry &);
 extern char &RISCVVortexWideLoadSplitID;
