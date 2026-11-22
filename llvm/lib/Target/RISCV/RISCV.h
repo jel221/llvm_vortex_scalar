@@ -103,6 +103,10 @@ void initializeRISCVVortexRegWindowPass(PassRegistry &);
 namespace RISCV {
 // Registers per thread the Vortex register windows expose (32 = none).
 unsigned getVortexMaxRegs();
+// 0 = sticky windows; 1, 2 = per-instruction prefixes (64-bit models).
+unsigned getVortexRwinMode();
+// Allocation and scheduling heuristics that serve sticky windows.
+bool useVortexWindowHeuristics();
 } // namespace RISCV
 
 FunctionPass *createRISCVVortexWideLoadSplitPass();

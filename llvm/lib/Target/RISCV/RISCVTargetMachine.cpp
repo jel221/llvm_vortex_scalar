@@ -441,7 +441,7 @@ public:
   ScheduleDAGInstrs *
   createMachineScheduler(MachineSchedContext *C) const override {
     ScheduleDAGMILive *DAG = nullptr;
-    if (RISCV::getVortexMaxRegs() > 32)
+    if (RISCV::useVortexWindowHeuristics())
       DAG = createVortexWindowSchedLive(C);
     if (EnableMISchedLoadStoreClustering) {
       DAG = DAG ? DAG : createGenericSchedLive(C);

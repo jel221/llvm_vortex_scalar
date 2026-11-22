@@ -161,6 +161,19 @@ static cl::opt<unsigned> VortexMaxRegs(
     cl::desc("Registers per thread reachable through Vortex register "
              "windows (32, 64, 128 or 256)"));
 
+static cl::opt<unsigned> VortexRwinMode(
+    "riscv-vortex-rwin-mode", cl::Hidden, cl::init(0),
+    cl::desc("How instructions reach registers above x31: 0 = sticky windows "
+             "(vx_rwin), 1 = a prefix on each instruction that needs one, "
+             "2 = a prefix on every instruction (the last two model 64-bit "
+             "encodings for comparison)"));
+
+unsigned RISCV::getVortexRwinMode() { return VortexRwinMode; }
+
+bool RISCV::useVortexWindowHeuristics() {
+  return getVortexMaxRegs() > 32 && getVortexRwinMode() == 0;
+}
+
 unsigned RISCV::getVortexMaxRegs() {
   unsigned N = VortexMaxRegs;
   if (N != 32 && N != 64 && N != 128 && N != 256)
@@ -1068,7 +1081,7 @@ bool RISCVRegisterInfo::getRegAllocationHints(
   // up as a group only when they need more than one block of their own; a
   // smaller overflow takes the next free registers in order. A value is judged by
   // the block where it is used most, single-block loops weighted 8x.
-  if (RISCV::getVortexMaxRegs() > 32) {
+  if (RISCV::useVortexWindowHeuristics()) {
     const TargetRegisterClass *RC = MRI->getRegClass(VirtReg);
     bool IsFP = RISCV::GPRF32RegClass.hasSubClassEq(RC);
     if (IsFP || RISCV::GPRRegClass.hasSubClassEq(RC)) {
@@ -1101,7 +1114,7 @@ bool RISCVRegisterInfo::getRegAllocationHints(
   // Register windows: updating a value in place keeps an instruction's result
   // in its source's 32-register block, so a phase over an array stays in one
   // window per field. A hint whose register is still live is skipped.
-  if (RISCV::getVortexMaxRegs() > 32) {
+  if (RISCV::useVortexWindowHeuristics()) {
     for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
       const MachineInstr &MI = *MO.getParent();
       if (MI.isCopy())

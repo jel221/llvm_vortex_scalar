@@ -452,6 +452,32 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   NB = MaxRegs / 32;
   NS = NB * NB * NB * NB;
 
+  // Study modes modelling 64-bit encodings: a one-instruction prefix carries
+  // the windows of the instruction after it (mode 1: only where needed; mode
+  // 2: on every instruction), and the sticky windows stay zero.
+  if (unsigned Mode = RISCV::getVortexRwinMode()) {
+    bool Modified = false;
+    for (auto &MBB : MF) {
+      for (auto &MI : make_early_inc_range(MBB)) {
+        if (MI.isMetaInstruction() || MI.getOpcode() == RISCV::VX_RPFX)
+          continue;
+        Req R = requirement(MI);
+        bool Needed = false;
+        for (auto W : R.W)
+          Needed |= W > 0;
+        if (!Needed && Mode == 1)
+          continue;
+        auto B = BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(RISCV::VX_RPFX));
+        for (auto W : R.W)
+          B.addImm(W > 0 ? W : 0);
+        ++NumRwin;
+        Modified = true;
+      }
+    }
+    CE.reset();
+    return Modified;
+  }
+
   if (EnableReorder) {
     WindowDAG DAG(MF);
     for (auto &MBB : MF)
