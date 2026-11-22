@@ -8949,6 +8949,16 @@ SDValue RISCVTargetLowering::lowerSELECT(SDValue Op, SelectionDAG &DAG) const {
     return DAG.getNode(ISD::VSELECT, DL, VT, CondSplat, TrueV, FalseV);
   }
 
+  // Zfinx keeps f32 in GPRs, so an f32 select is an integer select; branchless
+  // matters on Vortex, where a divergent branch costs a split/join.
+  if (Subtarget.hasStdExtZicond() && Subtarget.hasStdExtZfinx() &&
+      VT == MVT::f32 && XLenVT == MVT::i32) {
+    SDValue Sel = DAG.getNode(ISD::SELECT, DL, MVT::i32, CondV,
+                              DAG.getBitcast(MVT::i32, TrueV),
+                              DAG.getBitcast(MVT::i32, FalseV));
+    return DAG.getBitcast(VT, Sel);
+  }
+
   // When Zicond or XVentanaCondOps is present, emit CZERO_EQZ and CZERO_NEZ
   // nodes to implement the SELECT. Performing the lowering here allows for
   // greater control over when CZERO_{EQZ/NEZ} are used vs another branchless
