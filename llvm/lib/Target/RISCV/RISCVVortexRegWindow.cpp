@@ -262,6 +262,9 @@ Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
     const MachineOperand &MO = MI.getOperand(I);
     if (!MO.isReg() || MO.isImplicit() || !MO.getReg())
       continue;
+    // Decode applies windows to per-thread registers only, never to a u field.
+    if (RISCV::UGPRRegClass.contains(MO.getReg()))
+      continue;
     int F = Fields[I];
     unsigned Win = TRI->getEncodingValue(MO.getReg()) >> 5;
     if (F == -2 || F == -1) {
