@@ -206,6 +206,32 @@ let RegAltNameIndices = [ABIRegAltName] in {
   }
 }
 
+// Vortex register windows: x32..x255. Their encoding keeps all 8 bits; an
+// instruction field holds the low 5 and the warp's window (vx_rwin) the rest.
+// They are reserved unless -riscv-vortex-max-regs allows them.
+class RISCVRegHi<bits<8> Enc, string n, list<string> alt> : Register<n> {
+  let Namespace = "RISCV";
+  let HWEncoding{7-0} = Enc;
+  let AltNames = alt;
+}
+class RISCVRegHiWithSubRegs<bits<8> Enc, string n, list<Register> subregs,
+                            list<string> alt>
+      : RegisterWithSubRegs<n, subregs> {
+  let Namespace = "RISCV";
+  let HWEncoding{7-0} = Enc;
+  let AltNames = alt;
+}
+
+let RegAltNameIndices = [ABIRegAltName] in {
+  foreach I = 32-255 in {
+    def X#I#_H : RISCVRegHi<I, "x"#I, ["x"#I]>;
+    let SubRegIndices = [sub_16] in
+    def X#I#_W : RISCVRegHiWithSubRegs<I, "x"#I, [!cast<Register>("X"#I#"_H")], ["x"#I]>;
+    let SubRegIndices = [sub_32] in
+    def X#I : RISCVRegHiWithSubRegs<I, "x"#I, [!cast<Register>("X"#I#"_W")], ["x"#I]>;
+  }
+}
+
 def XLenVT : ValueTypeByHwMode<[RV32, RV64],
                                [i32,  i64]>;
 defvar XLenPairVT = untyped;
@@ -244,7 +270,19 @@ def GPR : GPRRegisterClass<(add (sequence "X%u", 10, 17),
                                 (sequence "X%u", 28, 31),
                                 (sequence "X%u", 8, 9),
                                 (sequence "X%u", 18, 27),
-                                (sequence "X%u", 0, 4))>;
+                                (sequence "X%u", 0, 4),
+                                (sequence "X%u", 32, 255))>;
+
+// x0..x31 only: operands that must be reachable in window 0 (inline asm).
+let DecoderMethod = "DecodeGPRRegisterClass" in {
+def GPRLo : GPRRegisterClass<(add (sequence "X%u", 10, 17),
+                                  (sequence "X%u", 5, 7),
+                                  (sequence "X%u", 28, 31),
+                                  (sequence "X%u", 8, 9),
+                                  (sequence "X%u", 18, 27),
+                                  (sequence "X%u", 0, 4))>;
+def GPRLoNoX0 : GPRRegisterClass<(sub GPRLo, X0)>;
+}
 
 def GPRX0 : GPRRegisterClass<(add X0)>;
 def GPRX1 : GPRRegisterClass<(add X1)>;
@@ -449,20 +487,39 @@ def GPRF16 : RISCVRegisterClass<[f16], 16, (add (sequence "X%u_H", 10, 17),
                                                 (sequence "X%u_H", 28, 31),
                                                 (sequence "X%u_H", 8, 9),
                                                 (sequence "X%u_H", 18, 27),
-                                                (sequence "X%u_H", 0, 4))>;
+                                                (sequence "X%u_H", 0, 4),
+                                                (sequence "X%u_H", 32, 255))>;
 def GPRF16C : RISCVRegisterClass<[f16], 16, (add (sequence "X%u_H", 10, 15),
                                                  (sequence "X%u_H", 8, 9))>;
 def GPRF16NoX0 : RISCVRegisterClass<[f16], 16, (sub GPRF16, X0_H)>;
 
+// With register windows, FP values (Zfinx) fill the windowed registers from
+// x32 up, leaving x0..x31 to addresses and counters, so the operands of an FP
+// phase share windows.
+defvar GPRF32VortexOrder = (add (sequence "X%u_W", 32, 255),
+                                (sequence "X%u_W", 10, 17),
+                                (sequence "X%u_W", 5, 7),
+                                (sequence "X%u_W", 28, 31),
+                                (sequence "X%u_W", 8, 9),
+                                (sequence "X%u_W", 18, 27),
+                                (sequence "X%u_W", 0, 4));
 def GPRF32 : RISCVRegisterClass<[f32], 32, (add (sequence "X%u_W", 10, 17),
                                                 (sequence "X%u_W", 5, 7),
                                                 (sequence "X%u_W", 28, 31),
                                                 (sequence "X%u_W", 8, 9),
                                                 (sequence "X%u_W", 18, 27),
-                                                (sequence "X%u_W", 0, 4))>;
+                                                (sequence "X%u_W", 0, 4),
+                                                (sequence "X%u_W", 32, 255))> {
+  let AltOrders = [GPRF32VortexOrder];
+  let AltOrderSelect = [{ return RISCV::useVortexWindowHints() ? 1 : 0; }];
+}
 def GPRF32C : RISCVRegisterClass<[f32], 32, (add (sequence "X%u_W", 10, 15),
                                                  (sequence "X%u_W", 8, 9))>;
-def GPRF32NoX0 : RISCVRegisterClass<[f32], 32, (sub GPRF32, X0_W)>;
+def GPRF32NoX0 : RISCVRegisterClass<[f32], 32, (sub GPRF32, X0_W)> {
+  let AltOrders = [(sub GPRF32VortexOrder, X0_W)];
+  let AltOrderSelect = [{ return RISCV::useVortexWindowHints() ? 1 : 0; }];
+}
+def GPRF32LoNoX0 : RISCVRegisterClass<[f32], 32, (sub GPRF32NoX0, (sequence "X%u_W", 32, 255))>;
 
 //===----------------------------------------------------------------------===//
 // Vector type mapping to LLVM types.

@@ -192,6 +192,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   }
   initializeRISCVDeadRegisterDefinitionsPass(*PR);
   initializeRISCVMakeCompressibleOptPass(*PR);
+  initializeRISCVVortexRegWindowPass(*PR);
   initializeRISCVGatherScatterLoweringPass(*PR);
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVVortexKEntryPass(*PR);
@@ -441,8 +442,10 @@ public:
   ScheduleDAGInstrs *
   createMachineScheduler(MachineSchedContext *C) const override {
     ScheduleDAGMILive *DAG = nullptr;
+    if (RISCV::useVortexWindowSched())
+      DAG = createVortexWindowSchedLive(C);
     if (EnableMISchedLoadStoreClustering) {
-      DAG = createGenericSchedLive(C);
+      DAG = DAG ? DAG : createGenericSchedLive(C);
       DAG->addMutation(createLoadClusterDAGMutation(
           DAG->TII, DAG->TRI, /*ReorderWhileClustering=*/true));
       DAG->addMutation(createStoreClusterDAGMutation(
@@ -704,6 +707,13 @@ void RISCVPassConfig::addPreEmitPass2() {
 
   if (gVortexBranchDivergenceMode != 0) {
     addPass(createVortexBranchDivergence2Pass(1));
+  }
+
+  // Register windows go in last, once every register operand is final; the
+  // inserted vx_rwin can push branches out of range, so relax again.
+  if (RISCV::getVortexMaxRegs() > 32) {
+    addPass(createRISCVVortexRegWindowPass());
+    addPass(&BranchRelaxationPassID);
   }
 }
 

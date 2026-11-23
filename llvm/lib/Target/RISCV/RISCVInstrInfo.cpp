@@ -1897,6 +1897,24 @@ unsigned RISCVInstrInfo::getInstBundleLength(const MachineInstr &MI) const {
   return Size;
 }
 
+// Vortex split/join/pred/tmc change the active thread mask; an instruction
+// moved across one runs for the wrong threads.
+bool RISCVInstrInfo::isSchedulingBoundary(const MachineInstr &MI,
+                                          const MachineBasicBlock *MBB,
+                                          const MachineFunction &MF) const {
+  switch (MI.getOpcode()) {
+  case RISCV::VX_SPLIT:
+  case RISCV::VX_SPLIT_N:
+  case RISCV::VX_JOIN:
+  case RISCV::VX_PRED:
+  case RISCV::VX_PRED_N:
+  case RISCV::VX_TMC:
+    return true;
+  default:
+    return TargetInstrInfo::isSchedulingBoundary(MI, MBB, MF);
+  }
+}
+
 bool RISCVInstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   const unsigned Opcode = MI.getOpcode();
   switch (Opcode) {

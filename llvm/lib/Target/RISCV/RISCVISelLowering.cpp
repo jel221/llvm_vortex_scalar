@@ -9048,6 +9048,16 @@ SDValue RISCVTargetLowering::lowerSELECT(SDValue Op, SelectionDAG &DAG) const {
     return DAG.getNode(ISD::VSELECT, DL, VT, CondSplat, TrueV, FalseV);
   }
 
+  // Zfinx keeps f32 in GPRs, so an f32 select is an integer select; branchless
+  // matters on Vortex, where a divergent branch costs a split/join.
+  if (Subtarget.hasStdExtZicond() && Subtarget.hasStdExtZfinx() &&
+      VT == MVT::f32 && XLenVT == MVT::i32) {
+    SDValue Sel = DAG.getNode(ISD::SELECT, DL, MVT::i32, CondV,
+                              DAG.getBitcast(MVT::i32, TrueV),
+                              DAG.getBitcast(MVT::i32, FalseV));
+    return DAG.getBitcast(VT, Sel);
+  }
+
   // When Zicond or XVentanaCondOps is present, emit CZERO_EQZ and CZERO_NEZ
   // nodes to implement the SELECT. Performing the lowering here allows for
   // greater control over when CZERO_{EQZ/NEZ} are used vs another branchless
@@ -22287,10 +22297,10 @@ RISCVTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       if (VT == MVT::f16 && Subtarget.hasStdExtZhinxmin())
         return std::make_pair(0U, &RISCV::GPRF16NoX0RegClass);
       if (VT == MVT::f32 && Subtarget.hasStdExtZfinx())
-        return std::make_pair(0U, &RISCV::GPRF32NoX0RegClass);
+        return std::make_pair(0U, &RISCV::GPRF32LoNoX0RegClass);
       if (VT == MVT::f64 && Subtarget.hasStdExtZdinx() && !Subtarget.is64Bit())
         return std::make_pair(0U, &RISCV::GPRPairNoX0RegClass);
-      return std::make_pair(0U, &RISCV::GPRNoX0RegClass);
+      return std::make_pair(0U, &RISCV::GPRLoNoX0RegClass);
     case 'f':
       if (VT == MVT::f16) {
         if (Subtarget.hasStdExtZfhmin())
@@ -22301,14 +22311,14 @@ RISCVTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
         if (Subtarget.hasStdExtF())
           return std::make_pair(0U, &RISCV::FPR32RegClass);
         if (Subtarget.hasStdExtZfinx())
-          return std::make_pair(0U, &RISCV::GPRF32NoX0RegClass);
+          return std::make_pair(0U, &RISCV::GPRF32LoNoX0RegClass);
       } else if (VT == MVT::f64) {
         if (Subtarget.hasStdExtD())
           return std::make_pair(0U, &RISCV::FPR64RegClass);
         if (Subtarget.hasStdExtZdinx() && !Subtarget.is64Bit())
           return std::make_pair(0U, &RISCV::GPRPairNoX0RegClass);
         if (Subtarget.hasStdExtZdinx() && Subtarget.is64Bit())
-          return std::make_pair(0U, &RISCV::GPRNoX0RegClass);
+          return std::make_pair(0U, &RISCV::GPRLoNoX0RegClass);
       }
       break;
     case 'R':
@@ -23856,6 +23866,18 @@ static bool isWarpParkingPoint(const MachineInstr &MI) {
 // naming the register itself (a gather, a consumer of the packed lanes) keeps
 // its own operands.
 void RISCVTargetLowering::finalizeLowering(MachineFunction &MF) const {
+  // Register windows are zero at thread-mask and divergence instructions, so
+  // their operands must come from x0..x31.
+  if (RISCV::getVortexMaxRegs() > 32) {
+    MachineRegisterInfo &MRI = MF.getRegInfo();
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (isWarpParkingPoint(MI) && !MI.isInlineAsm())
+          for (MachineOperand &MO : MI.explicit_operands())
+            if (MO.isReg() && MO.getReg().isVirtual())
+              MRI.constrainRegClass(MO.getReg(), &RISCV::GPRLoRegClass);
+  }
+
   ArrayRef<MCPhysReg> GatherRegs =
       MF.getInfo<RISCVMachineFunctionInfo>()->getWarpGatherRegs();
   const TargetRegisterInfo &TRI = *Subtarget.getRegisterInfo();

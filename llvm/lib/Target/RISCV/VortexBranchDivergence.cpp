@@ -1820,6 +1820,9 @@ bool VortexBranchDivergence2::runOnMachineFunction(MachineFunction &MF) {
         if (MI.getOpcode() == RISCV::VX_MOV) {
           auto DestReg = MI.getOperand(0).getReg();
           auto SrcReg = MI.getOperand(1).getReg();
+          // keep the destination's class (vx_split takes x0..x31 operands)
+          if (SrcReg.isVirtual() && DestReg.isVirtual())
+            MRI.constrainRegClass(SrcReg, MRI.getRegClass(DestReg));
           MRI.replaceRegWith(DestReg, SrcReg);
           MI.eraseFromParent();
           Changed = true;

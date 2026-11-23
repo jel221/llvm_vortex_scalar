@@ -127,6 +127,10 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
 
   unsigned getRegisterCostTableIndex(const MachineFunction &MF) const override;
 
+  std::pair<unsigned, unsigned>
+  blockPressure(const MachineBasicBlock &MBB,
+                const MachineRegisterInfo &MRI) const;
+
   bool getRegAllocationHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
                              SmallVectorImpl<MCPhysReg> &Hints,
                              const MachineFunction &MF, const VirtRegMap *VRM,

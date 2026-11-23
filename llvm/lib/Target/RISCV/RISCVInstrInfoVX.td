@@ -55,6 +55,46 @@ def VX_ROP : RVInstR4<0, 1, RISCV_CUSTOM1, (outs), (ins GPR:$rs1, GPR:$rs2, GPR:
 
 }
 
+// Register windows: sets the warp's window for the rd, rs1, rs2 and rs3 fields.
+// Each window sits in the low bits of its own field, rs3's in funct3.
+let hasSideEffects = 1, mayStore = 0, mayLoad = 0 in
+def VX_RWIN : RVInst<(outs), (ins uimm3:$wrd, uimm3:$wrs1, uimm3:$wrs2, uimm3:$wrs3),
+                     "vx_rwin", "$wrd, $wrs1, $wrs2, $wrs3", [], InstFormatR>, Sched<[]> {
+  bits<3> wrd;
+  bits<3> wrs1;
+  bits<3> wrs2;
+  bits<3> wrs3;
+  let Inst{31-25} = 0b0000001;
+  let Inst{24-23} = 0;
+  let Inst{22-20} = wrs2;
+  let Inst{19-18} = 0;
+  let Inst{17-15} = wrs1;
+  let Inst{14-12} = wrs3;
+  let Inst{11-10} = 0;
+  let Inst{9-7} = wrd;
+  let Inst{6-0} = RISCV_CUSTOM2.Value;
+}
+
+// Study only: one-instruction prefix (funct7 2) with the same layout; fused
+// with the instruction after it, it models a 64-bit instruction.
+let hasSideEffects = 1, mayStore = 0, mayLoad = 0 in
+def VX_RPFX : RVInst<(outs), (ins uimm3:$wrd, uimm3:$wrs1, uimm3:$wrs2, uimm3:$wrs3),
+                     "vx_rpfx", "$wrd, $wrs1, $wrs2, $wrs3", [], InstFormatR>, Sched<[]> {
+  bits<3> wrd;
+  bits<3> wrs1;
+  bits<3> wrs2;
+  bits<3> wrs3;
+  let Inst{31-25} = 0b0000010;
+  let Inst{24-23} = 0;
+  let Inst{22-20} = wrs2;
+  let Inst{19-18} = 0;
+  let Inst{17-15} = wrs1;
+  let Inst{14-12} = wrs3;
+  let Inst{11-10} = 0;
+  let Inst{9-7} = wrd;
+  let Inst{6-0} = RISCV_CUSTOM2.Value;
+}
+
 def VX_MOV : Pseudo<(outs GPR:$dst), (ins GPR:$src), [], "vx_mov", "$dst, $src"> {}
 
 def CSR_NT : SysReg<"nt", 0xFC0>;

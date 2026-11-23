@@ -136,6 +136,48 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   }
 }
 
+static cl::opt<unsigned> VortexMaxRegs(
+    "riscv-vortex-max-regs", cl::Hidden, cl::init(32),
+    cl::desc("Registers per thread reachable through Vortex register "
+             "windows (32, 64, 128 or 256)"));
+
+static cl::opt<unsigned> VortexRwinMode(
+    "riscv-vortex-rwin-mode", cl::Hidden, cl::init(0),
+    cl::desc("How instructions reach registers above x31: 0 = sticky windows "
+             "(vx_rwin), 1 = a prefix on each instruction that needs one, "
+             "2 = a prefix on every instruction (the last two model 64-bit "
+             "encodings for comparison)"));
+
+unsigned RISCV::getVortexRwinMode() { return VortexRwinMode; }
+
+static cl::opt<bool> VortexWindowSched(
+    "riscv-vortex-window-sched", cl::Hidden, cl::init(true),
+    cl::desc("Window-friendly pre-RA scheduling for register windows"));
+// Off by default: on softmax, epilogue and FFT kernels plain low-first
+// allocation needed as few or fewer window switches and cycles.
+static cl::opt<bool> VortexWindowHints(
+    "riscv-vortex-window-hints", cl::Hidden, cl::init(false),
+    cl::desc("Block-choosing allocation order and hints for register windows"));
+
+bool RISCV::useVortexWindowHeuristics() {
+  return getVortexMaxRegs() > 32 && getVortexRwinMode() == 0;
+}
+// The level-order scheduler also cuts spills in register-rich code, so it
+// serves every encoding, not only sticky windows.
+bool RISCV::useVortexWindowSched() {
+  return getVortexMaxRegs() > 32 && VortexWindowSched;
+}
+bool RISCV::useVortexWindowHints() {
+  return useVortexWindowHeuristics() && VortexWindowHints;
+}
+
+unsigned RISCV::getVortexMaxRegs() {
+  unsigned N = VortexMaxRegs;
+  if (N != 32 && N != 64 && N != 128 && N != 256)
+    report_fatal_error("-riscv-vortex-max-regs must be 32, 64, 128 or 256");
+  return N;
+}
+
 BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const RISCVFrameLowering *TFI = getFrameLowering(MF);
   BitVector Reserved(getNumRegs());
@@ -165,6 +207,15 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Additionally reserve dummy register used to form the register pair
   // beginning with 'x0' for instructions that take register pairs.
   markSuperRegs(Reserved, RISCV::DUMMY_REG_PAIR_WITH_X0);
+
+  // x32 and up only exist with Vortex register windows, and field 0 is x0 in
+  // every window, so x32, x64, ... are never reachable.
+  unsigned MaxRegs = RISCV::getVortexMaxRegs();
+  for (MCPhysReg Reg : RISCV::GPRF16RegClass) {
+    unsigned Enc = getEncodingValue(Reg);
+    if (Enc >= MaxRegs || (Enc >= 32 && Enc % 32 == 0))
+      markSuperRegs(Reserved, Reg);
+  }
 
   // There are only 16 GPRs for RVE.
   if (Subtarget.hasStdExtE())
@@ -883,6 +934,59 @@ RISCVRegisterInfo::getRegisterCostTableIndex(const MachineFunction &MF) const {
 
 // Add two address hints to improve chances of being able to use a compressed
 // instruction.
+// Most integer and FP virtual registers live at once in MBB. A value is live
+// from its first to its last appearance in the block, extended to the block
+// edges when it also appears in other blocks.
+std::pair<unsigned, unsigned>
+RISCVRegisterInfo::blockPressure(const MachineBasicBlock &MBB,
+                                 const MachineRegisterInfo &MRI) const {
+  struct Range {
+    unsigned First, Last;
+    bool FP;
+  };
+  DenseMap<Register, Range> Ranges;
+  unsigned Idx = 0;
+  for (const MachineInstr &MI : MBB) {
+    for (const MachineOperand &MO : MI.operands()) {
+      if (!MO.isReg() || !MO.getReg().isVirtual())
+        continue;
+      Register R = MO.getReg();
+      auto [It, New] = Ranges.try_emplace(R, Range{Idx, Idx, false});
+      if (New) {
+        It->second.FP =
+            RISCV::GPRF32RegClass.hasSubClassEq(MRI.getRegClass(R));
+        if (MO.isUse())
+          It->second.First = 0;
+      }
+      It->second.Last = Idx;
+    }
+    ++Idx;
+  }
+  for (auto &[R, Rg] : Ranges) {
+    for (const MachineInstr &MI : MRI.reg_nodbg_instructions(R)) {
+      if (MI.getParent() != &MBB) {
+        Rg.Last = Idx;
+        break;
+      }
+    }
+  }
+  std::vector<int> IntDelta(Idx + 2, 0), FPDelta(Idx + 2, 0);
+  for (auto &[R, Rg] : Ranges) {
+    auto &D = Rg.FP ? FPDelta : IntDelta;
+    ++D[Rg.First];
+    --D[Rg.Last + 1];
+  }
+  unsigned IntMax = 0, FPMax = 0;
+  int IntCur = 0, FPCur = 0;
+  for (unsigned I = 0; I <= Idx; ++I) {
+    IntCur += IntDelta[I];
+    FPCur += FPDelta[I];
+    IntMax = std::max<unsigned>(IntMax, IntCur);
+    FPMax = std::max<unsigned>(FPMax, FPCur);
+  }
+  return {IntMax, FPMax};
+}
+
 bool RISCVRegisterInfo::getRegAllocationHints(
     Register VirtReg, ArrayRef<MCPhysReg> Order,
     SmallVectorImpl<MCPhysReg> &Hints, const MachineFunction &MF,
@@ -980,6 +1084,64 @@ bool RISCVRegisterInfo::getRegAllocationHints(
     Register PhysReg = Reg.isPhysical() ? Reg : Register(VRM->getPhys(Reg));
     return PhysReg && RISCV::GPRCRegClass.contains(PhysReg);
   };
+
+  // Register windows: which 32-register block a value should live in. Code
+  // whose live values fit in x1..x31 stays there. Where they do not (an
+  // unrolled phase), FP values with few uses (array elements) go to x32 up so
+  // a phase over them keeps each field in one window, while values with many
+  // uses (a max, a scale, an address) stay in x1..x31. Integer elements move
+  // up as a group only when they need more than one block of their own; a
+  // smaller overflow takes the next free registers in order. A value is judged by
+  // the block where it is used most, single-block loops weighted 8x.
+  if (RISCV::useVortexWindowHints()) {
+    const TargetRegisterClass *RC = MRI->getRegClass(VirtReg);
+    bool IsFP = RISCV::GPRF32RegClass.hasSubClassEq(RC);
+    if (IsFP || RISCV::GPRRegClass.hasSubClassEq(RC)) {
+      DenseMap<const MachineBasicBlock *, unsigned> Weight;
+      unsigned Uses = 0;
+      for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
+        const MachineBasicBlock *MBB = MO.getParent()->getParent();
+        Weight[MBB] += MBB->isSuccessor(MBB) ? 8 : 1;
+        Uses += MO.isUse();
+      }
+      const MachineBasicBlock *Home = nullptr;
+      for (auto &[MBB, W] : Weight)
+        if (!Home || W > Weight[Home] ||
+            (W == Weight[Home] && MBB->getNumber() < Home->getNumber()))
+          Home = MBB;
+      if (Home) {
+        auto [IntP, FPP] = blockPressure(*Home, *MRI);
+        bool FewUses = Uses <= 12;
+        bool High = false;
+        if (IntP + FPP > 26)
+          High = IsFP ? FewUses : (FewUses && IntP > 40);
+        for (MCPhysReg Reg : Order)
+          if ((getEncodingValue(Reg) >= 32) == High &&
+              !is_contained(Hints, Reg))
+            Hints.push_back(Reg);
+      }
+    }
+  }
+
+  // Register windows: updating a value in place keeps an instruction's result
+  // in its source's 32-register block, so a phase over an array stays in one
+  // window per field. A hint whose register is still live is skipped.
+  if (RISCV::useVortexWindowHints()) {
+    for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
+      const MachineInstr &MI = *MO.getParent();
+      if (MI.isCopy())
+        continue;
+      if (MO.isDef()) {
+        for (const MachineOperand &Src : MI.explicit_uses())
+          if (Src.isReg() && Src.getReg())
+            tryAddHint(MO, Src, false);
+      } else {
+        for (const MachineOperand &Def : MI.defs())
+          if (Def.isReg() && Def.getReg() && !Def.isImplicit())
+            tryAddHint(MO, Def, false);
+      }
+    }
+  }
 
   for (auto &MO : MRI->reg_nodbg_operands(VirtReg)) {
     const MachineInstr &MI = *MO.getParent();
