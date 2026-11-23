@@ -138,8 +138,8 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 
 static cl::opt<unsigned> VortexMaxRegs(
     "riscv-vortex-max-regs", cl::Hidden, cl::init(32),
-    cl::desc("Registers per thread reachable through Vortex register "
-             "windows (32, 64, 128 or 256)"));
+    cl::desc("Registers per thread the allocator may use, through Vortex "
+             "register windows past 32: a multiple of 8 from 32 to 256"));
 
 static cl::opt<unsigned> VortexRwinMode(
     "riscv-vortex-rwin-mode", cl::Hidden, cl::init(0),
@@ -173,8 +173,8 @@ bool RISCV::useVortexWindowHints() {
 
 unsigned RISCV::getVortexMaxRegs() {
   unsigned N = VortexMaxRegs;
-  if (N != 32 && N != 64 && N != 128 && N != 256)
-    report_fatal_error("-riscv-vortex-max-regs must be 32, 64, 128 or 256");
+  if (N < 32 || N > 256 || N % 8 != 0)
+    report_fatal_error("-riscv-vortex-max-regs must be a multiple of 8 from 32 to 256");
   return N;
 }
 

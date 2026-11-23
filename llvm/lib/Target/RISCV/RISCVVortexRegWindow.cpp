@@ -452,7 +452,7 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   CE.reset(MF.getTarget().getTarget().createMCCodeEmitter(
       *MF.getTarget().getMCInstrInfo(), MF.getContext()));
   FieldCache.clear();
-  NB = MaxRegs / 32;
+  NB = (MaxRegs + 31) / 32;
   NS = NB * NB * NB * NB;
 
   // Study modes modelling 64-bit encodings: a one-instruction prefix carries

@@ -108,6 +108,7 @@ public:
 
   void emitFunctionEntryLabel() override;
   bool emitDirectiveOptionArch();
+  void emitVortexRegCount(const MachineFunction &MF);
 
 private:
   void emitAttributes(const MCSubtargetInfo &SubtargetInfo);
@@ -500,6 +501,7 @@ bool RISCVAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 
   SetupMachineFunction(MF);
   emitFunctionBody();
+  emitVortexRegCount(MF);
 
   // Emit the XRay table
   emitXRayTable();
@@ -507,6 +509,40 @@ bool RISCVAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   if (EmittedOptionArch)
     RTS.emitDirectiveOptionPop();
   return false;
+}
+
+// With register windows the encoded fields no longer show which registers a
+// function names, so it records them for the loader's per-kernel register
+// count: { function address, x registers, f registers } in .vortex.regs, a
+// section the image keeps but does not load.
+void RISCVAsmPrinter::emitVortexRegCount(const MachineFunction &MF) {
+  if (RISCV::getVortexMaxRegs() <= 32)
+    return;
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+  unsigned RX = 0, RF = 0;
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB)
+      for (const MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg() || !MO.getReg().isPhysical())
+          continue;
+        MCRegister R = MO.getReg().asMCReg();
+        unsigned N = TRI->getEncodingValue(R) + 1;
+        if (RISCV::GPRRegClass.contains(R) || RISCV::GPRF32RegClass.contains(R) ||
+            RISCV::GPRF16RegClass.contains(R))
+          RX = std::max(RX, N);
+        else if (RISCV::FPR16RegClass.contains(R) ||
+                 RISCV::FPR32RegClass.contains(R) ||
+                 RISCV::FPR64RegClass.contains(R))
+          RF = std::max(RF, N);
+      }
+  OutStreamer->pushSection();
+  OutStreamer->switchSection(
+      OutContext.getELFSection(".vortex.regs", ELF::SHT_PROGBITS, 0));
+  OutStreamer->emitValue(MCSymbolRefExpr::create(CurrentFnSym, OutContext),
+                         MAI->getCodePointerSize());
+  OutStreamer->emitIntValue(RX, 2);
+  OutStreamer->emitIntValue(RF, 2);
+  OutStreamer->popSection();
 }
 
 void RISCVAsmPrinter::LowerPATCHABLE_FUNCTION_ENTER(const MachineInstr *MI) {
