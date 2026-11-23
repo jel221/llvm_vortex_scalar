@@ -178,6 +178,14 @@ unsigned RISCV::getVortexMaxRegs() {
   return N;
 }
 
+unsigned RISCV::getVortexMaxRegs(const Function &F) {
+  unsigned N = getVortexMaxRegs();
+  unsigned V;
+  if (!F.getFnAttribute("vortex-max-regs").getValueAsString().getAsInteger(10, V))
+    N = std::min(N, V);
+  return N;
+}
+
 BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const RISCVFrameLowering *TFI = getFrameLowering(MF);
   BitVector Reserved(getNumRegs());
@@ -210,7 +218,7 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   // x32 and up only exist with Vortex register windows, and field 0 is x0 in
   // every window, so x32, x64, ... are never reachable.
-  unsigned MaxRegs = RISCV::getVortexMaxRegs();
+  unsigned MaxRegs = RISCV::getVortexMaxRegs(MF.getFunction());
   for (MCPhysReg Reg : RISCV::GPRF16RegClass) {
     unsigned Enc = getEncodingValue(Reg);
     if (Enc >= MaxRegs || (Enc >= 32 && Enc % 32 == 0))

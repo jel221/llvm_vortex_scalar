@@ -196,6 +196,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVGatherScatterLoweringPass(*PR);
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVVortexKEntryPass(*PR);
+  initializeRISCVVortexRegBudgetPass(*PR);
   initializeRISCVVortexWideLoadSplitPass(*PR);
   initializeRISCVVortexUniformOperandPass(*PR);
   initializeRISCVPostRAExpandPseudoPass(*PR);
@@ -545,6 +546,7 @@ void RISCVPassConfig::addIRPasses() {
   addPass(createAtomicExpandLegacyPass());
   addPass(createRISCVZacasABIFixPass());
   addPass(createRISCVVortexKEntryPass());
+  addPass(createRISCVVortexRegBudgetPass());
 
   if (getOptLevel() != CodeGenOptLevel::None) {
     // Merge word-aligned float loads and stores into the v2f32/v4f32

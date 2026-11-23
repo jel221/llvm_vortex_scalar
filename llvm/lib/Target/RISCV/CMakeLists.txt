@@ -64,6 +64,7 @@ add_llvm_target(RISCVCodeGen
   RISCVVectorPeephole.cpp
   RISCVVLOptimizer.cpp
   RISCVVortexKEntry.cpp
+  RISCVVortexRegBudget.cpp
   RISCVVortexRegWindow.cpp
   RISCVVortexWindowSched.cpp
   RISCVVortexWideLoadSplit.cpp

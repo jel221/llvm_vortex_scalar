@@ -94,6 +94,9 @@ void initializeRISCVZacasABIFixPass(PassRegistry &);
 ModulePass *createRISCVVortexKEntryPass();
 void initializeRISCVVortexKEntryPass(PassRegistry &);
 
+ModulePass *createRISCVVortexRegBudgetPass();
+void initializeRISCVVortexRegBudgetPass(PassRegistry &);
+
 FunctionPass *createRISCVVortexRegWindowPass();
 class MachineSchedContext;
 class ScheduleDAGMILive;
@@ -103,6 +106,8 @@ void initializeRISCVVortexRegWindowPass(PassRegistry &);
 namespace RISCV {
 // Registers per thread the Vortex register windows expose (32 = none).
 unsigned getVortexMaxRegs();
+// Registers per thread F may allocate, from its "vortex-max-regs" attribute.
+unsigned getVortexMaxRegs(const Function &F);
 // 0 = sticky windows; 1, 2 = per-instruction prefixes (64-bit models).
 unsigned getVortexRwinMode();
 // Allocation and scheduling heuristics that serve sticky windows.
