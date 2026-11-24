@@ -52,6 +52,10 @@ static cl::opt<bool> EnableReorder(
     "riscv-vortex-rwin-reorder", cl::Hidden, cl::init(true),
     cl::desc("Reorder independent instructions so consecutive ones share "
              "register windows"));
+static cl::opt<bool> UsePrefix(
+    "riscv-vortex-rwin-prefix", cl::Hidden, cl::init(false),
+    cl::desc("Give an instruction its windows with a one-shot vx_rpfx where "
+             "that is cheaper than switching the warp's windows"));
 static cl::opt<unsigned> ReorderReach(
     "riscv-vortex-rwin-reorder-reach", cl::Hidden, cl::init(8),
     cl::desc("How far ahead of the earliest unscheduled instruction the "
@@ -65,6 +69,9 @@ constexpr uint32_t Inf = UINT32_MAX / 2;
 
 struct Req {
   int8_t W[NumFields] = {AnyWin, AnyWin, AnyWin, AnyWin};
+  // the warp's windows themselves must be W (calls, divergence, ...), so a
+  // one-shot prefix does not serve it
+  bool Fixed = false;
   bool any() const {
     for (auto W : this->W)
       if (W != AnyWin)
@@ -100,6 +107,7 @@ private:
     unsigned Exit = 0;
     unsigned Want = 0; // state at the first constrained instruction, or NS
     SmallVector<std::pair<MachineInstr *, unsigned>, 4> Inserts;
+    SmallVector<std::pair<MachineInstr *, Req>, 4> Prefixes;
   };
 
   const RISCVInstrInfo *TII = nullptr;
@@ -217,6 +225,7 @@ Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
   Req Zero;
   for (auto &W : Zero.W)
     W = 0;
+  Zero.Fixed = true;
 
   switch (MI.getOpcode()) {
   case RISCV::ECALL:
@@ -295,8 +304,10 @@ RISCVVortexRegWindow::Plan RISCVVortexRegWindow::planBlock(
   const unsigned N = Reqs.size();
   std::vector<uint32_t> Cost(NS + 1, Inf), Next(NS + 1);
   Cost[Entry] = 0;
-  // Switched[i][s]: state s at instruction i was set by a vx_rwin before it.
+  // Switched[i][s]: state s at instruction i was set by a vx_rwin before it;
+  // Prefixed[i][s]: instruction i ran in state s under a one-shot vx_rpfx.
   std::vector<std::vector<bool>> Switched(N, std::vector<bool>(NS + 1));
+  std::vector<std::vector<bool>> Prefixed(N, std::vector<bool>(NS + 1));
   std::vector<unsigned> BestBefore(N);
 
   for (unsigned I = 0; I < N; ++I) {
@@ -306,10 +317,19 @@ RISCVVortexRegWindow::Plan RISCVVortexRegWindow::planBlock(
       if (Cost[S] < Cost[Best])
         Best = S;
     BestBefore[I] = Best;
+    // a prefix gives the instruction its windows and leaves the warp's as
+    // they are; it cannot sit between a block's terminators
+    bool CanPrefix = UsePrefix && !R.any() && !R.Fixed &&
+                     !Reqs[I].first->isTerminator();
     for (unsigned S = 0; S <= NS; ++S) {
       Next[S] = Inf;
-      if (!satisfies(S, R))
+      if (!satisfies(S, R)) {
+        if (CanPrefix && Cost[S] < Inf) {
+          Next[S] = Cost[S] + 1;
+          Prefixed[I][S] = true;
+        }
         continue;
+      }
       uint32_t Keep = Cost[S];
       uint32_t Switch = (S == NS || R.any()) ? Inf : Cost[Best] + 1;
       if (Keep <= Switch) {
@@ -343,6 +363,10 @@ RISCVVortexRegWindow::Plan RISCVVortexRegWindow::planBlock(
   for (unsigned I = N; I-- > 0;) {
     if (!Reqs[I].second.any())
       P.Want = S;
+    if (Prefixed[I][S]) {
+      P.Prefixes.push_back(Reqs[I]);
+      continue;
+    }
     if (Switched[I][S]) {
       P.Inserts.push_back({Reqs[I].first, S});
       S = BestBefore[I];
@@ -599,6 +623,14 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
 
   bool Modified = false;
   for (auto *MBB : RPOT) {
+    for (auto &[MI, R] : Plans[MBB].Prefixes) {
+      auto B = BuildMI(*MI->getParent(), MI, MI->getDebugLoc(),
+                       TII->get(RISCV::VX_RPFX));
+      for (auto W : R.W)
+        B.addImm(W > 0 ? W : 0);
+      ++NumRwin;
+      Modified = true;
+    }
     for (auto &[MI, S] : Plans[MBB].Inserts) {
       BuildMI(*MI->getParent(), MI, MI->getDebugLoc(),
               TII->get(RISCV::VX_RWIN))
@@ -614,6 +646,7 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   // Check: replay every block from its entry state.
   for (auto *MBB : RPOT) {
     unsigned S = Entry[MBB];
+    const MachineInstr *Pfx = nullptr;
     for (auto &MI : *MBB) {
       if (MI.getOpcode() == RISCV::VX_RWIN) {
         S = 0;
@@ -621,7 +654,19 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
           S = S * NB + MI.getOperand(F).getImm();
         continue;
       }
-      if (!satisfies(S, requirement(MI)))
+      if (MI.getOpcode() == RISCV::VX_RPFX) {
+        Pfx = &MI;
+        continue;
+      }
+      Req R = requirement(MI);
+      if (Pfx) {
+        for (unsigned F = 0; F < NumFields; ++F)
+          if (R.W[F] != AnyWin && R.W[F] != Pfx->getOperand(F).getImm())
+            report_fatal_error("vortex register windows: prefix check failed");
+        Pfx = nullptr;
+        continue;
+      }
+      if (!satisfies(S, R))
         report_fatal_error("vortex register windows: placement check failed");
     }
     if (S != Exit[MBB])
