@@ -10,7 +10,7 @@
 // 3-bit window: the register a field names is (window << 5) | field. Register
 // allocation sees x0..x(N-1); this pass inserts VX_RWIN so that, at every
 // instruction, each field's window equals the block of the register encoded in
-// it. x0 needs no window: it is the zero register in every window.
+// it. Field 0 names x0 only in window 0, so an x0 operand needs window 0.
 //
 // The window state is zero at function entry, calls, returns, traps and around
 // divergence (vx_split/vx_join/vx_pred/vx_tmc), and at inline asm.
@@ -206,10 +206,6 @@ RISCVVortexRegWindow::operandFields(const MachineInstr &MI) {
       .first->second;
 }
 
-static bool isZeroReg(Register Reg) {
-  return Reg == RISCV::X0 || Reg == RISCV::X0_W || Reg == RISCV::X0_H;
-}
-
 Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
   Req R;
   if (MI.isMetaInstruction())
@@ -240,9 +236,14 @@ Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
   if (MI.isInlineAsm() || MI.isCall() || MI.isReturn())
     return Zero;
 
+  if (MI.getOpcode() == RISCV::PseudoBR) {
+    R.W[0] = 0; // emitted as jal x0
+    return R;
+  }
+
   bool HasReg = false;
   for (const MachineOperand &MO : MI.explicit_operands())
-    if (MO.isReg() && MO.getReg() && !isZeroReg(MO.getReg()))
+    if (MO.isReg() && MO.getReg())
       HasReg = true;
   if (!HasReg)
     return R;
@@ -273,8 +274,6 @@ Req RISCVVortexRegWindow::requirement(MachineInstr &MI) {
         return Zero;
       continue;
     }
-    if (isZeroReg(MO.getReg()))
-      continue;
     if (R.W[F] != AnyWin && R.W[F] != int8_t(Win))
       report_fatal_error("vortex register windows: " +
                          TII->getName(MI.getOpcode()) +
@@ -492,9 +491,32 @@ bool RISCVVortexRegWindow::runOnMachineFunction(MachineFunction &MF) {
   DenseMap<const MachineBasicBlock *,
            SmallVector<std::pair<MachineInstr *, Req>, 32>>
       Reqs;
-  for (auto &MBB : MF)
-    for (auto &MI : MBB)
-      Reqs[&MBB].push_back({&MI, requirement(MI)});
+  // A vx_rwin cannot go between a block's terminators, so the first one
+  // takes the requirements of those after it.
+  for (auto &MBB : MF) {
+    auto &V = Reqs[&MBB];
+    int First = -1;
+    for (auto &MI : MBB) {
+      Req R = requirement(MI);
+      if (MI.isTerminator()) {
+        if (First < 0) {
+          First = V.size();
+        } else {
+          Req &T = V[First].second;
+          for (unsigned F = 0; F < NumFields; ++F) {
+            if (R.W[F] == AnyWin)
+              continue;
+            if (T.W[F] != AnyWin && T.W[F] != R.W[F])
+              report_fatal_error("vortex register windows: a block's "
+                                 "terminators need two windows in one field");
+            T.W[F] = R.W[F];
+          }
+          R = Req();
+        }
+      }
+      V.push_back({&MI, R});
+    }
+  }
 
   ReversePostOrderTraversal<MachineFunction *> RPOT(&MF);
   const MachineBasicBlock *EntryMBB = &MF.front();

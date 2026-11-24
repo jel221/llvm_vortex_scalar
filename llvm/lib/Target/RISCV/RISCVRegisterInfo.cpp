@@ -228,14 +228,11 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // beginning with 'x0' for instructions that take register pairs.
   markSuperRegs(Reserved, RISCV::DUMMY_REG_PAIR_WITH_X0);
 
-  // x32 and up only exist with Vortex register windows, and field 0 is x0 in
-  // every window, so x32, x64, ... are never reachable.
+  // x32 and up only exist with Vortex register windows.
   unsigned MaxRegs = RISCV::getVortexMaxRegs();
-  for (MCPhysReg Reg : RISCV::GPRF16RegClass) {
-    unsigned Enc = getEncodingValue(Reg);
-    if (Enc >= MaxRegs || (Enc >= 32 && Enc % 32 == 0))
+  for (MCPhysReg Reg : RISCV::GPRF16RegClass)
+    if (getEncodingValue(Reg) >= MaxRegs)
       markSuperRegs(Reserved, Reg);
-  }
 
   // There are only 16 GPRs for RVE.
   if (Subtarget.hasStdExtE())
