@@ -52,6 +52,10 @@ static cl::opt<bool> EnableReorder(
     "riscv-vortex-rwin-reorder", cl::Hidden, cl::init(true),
     cl::desc("Reorder independent instructions so consecutive ones share "
              "register windows"));
+static cl::opt<unsigned> ReorderReach(
+    "riscv-vortex-rwin-reorder-reach", cl::Hidden, cl::init(8),
+    cl::desc("How far ahead of the earliest unscheduled instruction the "
+             "reorder may pick one (0 = anywhere in the region)"));
 
 namespace {
 
@@ -365,7 +369,9 @@ bool RISCVVortexRegWindow::isRegionBoundary(const MachineInstr &MI) const {
 // divergence or other window-zero points): among the instructions whose
 // dependences are met, take the earliest one the current windows already
 // satisfy, else the earliest one. A phase whose operands span several blocks
-// then switches once per block instead of once per element.
+// then switches once per block instead of once per element. With a reach, only
+// instructions that close to the earliest unscheduled one are candidates, so the
+// order keeps the scheduler's spacing of loads and long-latency operations.
 void RISCVVortexRegWindow::reorderBlock(MachineBasicBlock &MBB,
                                         WindowDAG &DAG) {
   for (auto I = MBB.begin(), E = MBB.end(); I != E;) {
@@ -404,7 +410,12 @@ void RISCVVortexRegWindow::reorderBlock(MachineBasicBlock &MBB,
     while (!Ready.empty()) {
       unsigned BestIdx = 0;
       bool BestFits = false;
+      // every dependence points forward in the original order, so the earliest
+      // unscheduled instruction is always ready
+      unsigned First = *std::min_element(Ready.begin(), Ready.end());
       for (unsigned K = 0; K < Ready.size(); ++K) {
+        if (ReorderReach && Ready[K] > First + ReorderReach)
+          continue;
         const Req &Q = R[Ready[K]];
         bool Fits = true;
         for (unsigned F = 0; F < NumFields; ++F)
