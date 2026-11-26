@@ -234,13 +234,23 @@ static Reloc::Model getEffectiveRelocModel(const Triple &TT,
   return RM.value_or(Reloc::Static);
 }
 
+// Register windows are placed by the compiler, so the linker must not rewrite
+// window code: a relaxed sequence can move gp or ra into a field whose window is
+// nonzero, and deleted instructions break vx_rwin fusion pairs.
+static std::string vortexFeatures(StringRef FS) {
+  if (RISCV::getVortexMaxRegs() <= 32)
+    return FS.str();
+  return FS.empty() ? std::string("-relax") : (FS + ",-relax").str();
+}
+
 RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
                                        StringRef CPU, StringRef FS,
                                        const TargetOptions &Options,
                                        std::optional<Reloc::Model> RM,
                                        std::optional<CodeModel::Model> CM,
                                        CodeGenOptLevel OL, bool JIT)
-    : CodeGenTargetMachineImpl(T, computeDataLayout(TT, Options), TT, CPU, FS,
+    : CodeGenTargetMachineImpl(T, computeDataLayout(TT, Options), TT, CPU,
+                               vortexFeatures(FS),
                                Options, getEffectiveRelocModel(TT, RM),
                                getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(std::make_unique<RISCVELFTargetObjectFile>()) {
@@ -273,8 +283,8 @@ RISCVTargetMachine::getSubtargetImpl(const Function &F) const {
       CPUAttr.isValid() ? CPUAttr.getValueAsString().str() : TargetCPU;
   std::string TuneCPU =
       TuneAttr.isValid() ? TuneAttr.getValueAsString().str() : CPU;
-  std::string FS =
-      FSAttr.isValid() ? FSAttr.getValueAsString().str() : TargetFS;
+  std::string FS = vortexFeatures(
+      FSAttr.isValid() ? FSAttr.getValueAsString() : StringRef(TargetFS));
 
   unsigned RVVBitsMin = RVVVectorBitsMinOpt;
   unsigned RVVBitsMax = RVVVectorBitsMaxOpt;
